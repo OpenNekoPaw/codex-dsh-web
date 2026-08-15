@@ -1,6 +1,6 @@
 {
   "name": "codex-dsh-web",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Drive and verify DSH Web sessions from Codex.",
   "author": {
     "name": "OpenNekoPaw",
@@ -29,9 +29,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use DSH Web to implement this task, then verify its changes.",
-      "Continue this task in the existing DSH Web session.",
-      "Ask DSH Web to fix the failing tests and validate the result."
+      "Open DSH Web in Codex's built-in browser and confirm the local service is reachable.",
+      "Open DSH Web in the built-in browser, then use it to implement my task and verify the changes.",
+      "Open the existing DSH Web session in the built-in browser and continue the task."
     ]
   }
 }

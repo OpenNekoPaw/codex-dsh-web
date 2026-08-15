@@ -107,6 +107,11 @@ surface is unavailable, the client's `open` command falls back to the macOS
 default browser. Opening the page alone does not replace API-based result
 collection; UI inspection or interaction must be explicitly requested.
 
+The first plugin starter prompt performs this UI-only action, so opening the
+plugin without an implementation request should still open the Browser panel
+instead of asking what code change to make. A URL link or website preview card
+does not count as opening the panel.
+
 ### DSH session configuration
 
 The plugin does not require a fixed agent preset, permission policy, or model:

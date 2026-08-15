@@ -31,14 +31,21 @@ Do not assume the caller's repository contains a copy of this script. Use the ab
    dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
    ```
 
-   Re-run `health`; if startup fails, inspect `/tmp/dsh-web.log`. Tell the user the browser UI is at `http://127.0.0.1:8765` rather than opening it unless asked.
+   Re-run `health`; if startup fails, inspect `/tmp/dsh-web.log`.
 
-   When the user explicitly asks to open or show the DSH UI, prefer the Codex
-   Desktop in-app Browser/WebView and navigate it to `DSH_URL`. If that surface
-   is unavailable, use `python3 "$DSH_CLIENT" open` as the macOS external-browser
-   fallback. Opening the page is for visualization; continue to use the HTTP API
-   for deterministic prompting and history reads. Use browser control only when
-   the user asks Codex to inspect or interact with the visible UI.
+   Treat invoking the plugin without an implementation task as a request to open
+   the DSH UI and confirm health. In Codex Desktop, use the Codex app action that
+   opens a URL in a browser panel, target `DSH_URL`, and place it beside the task.
+   Do not satisfy this request by only printing the URL, returning a Markdown
+   link, or rendering a website preview card. The UI is considered opened only
+   when Codex has requested an actual Browser/WebView panel.
+
+   If the Codex app browser-panel action is unavailable, use
+   `python3 "$DSH_CLIENT" open` as the macOS external-browser fallback and state
+   that the fallback was used. Opening the page is for visualization; continue
+   to use the HTTP API for deterministic prompting and history reads. Use browser
+   control only when the user asks Codex to inspect or interact with the visible
+   UI.
 
 2. Create one session rooted at the target repository:
 

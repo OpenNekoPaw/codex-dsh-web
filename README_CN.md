@@ -104,6 +104,8 @@ skill 的描述允许隐式触发，但 Codex 不会仅因为端口 `8765` 已�
 
 Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到 macOS 默认浏览器。仅打开页面不能替代通过 API 读取结果；需要 Codex 检查或操作 UI 时应明确提出。
 
+插件的第一条 starter prompt 只执行打开 UI 的动作，因此即使没有附带实现任务，也应直接打开 Browser 面板，而不是追问要修改什么代码。仅显示 URL 链接或网页预览卡片不算已经打开面板。
+
 ### DSH session 配置
 
 插件不强制固定的 agent preset、权限策略或模型：
