@@ -1,0 +1,26 @@
+{
+  "name": "codex-dsh-skill",
+  "version": "0.1.0",
+  "description": "Drive and verify DSH Web sessions from Codex.",
+  "author": {
+    "name": "Feng"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex DSH Web",
+    "shortDescription": "Delegate tasks to local DSH Web sessions.",
+    "longDescription": "Create and reuse DSH Web sessions, exchange prompts over its local HTTP API, inspect results, and feed Codex verification back into the same session.",
+    "developerName": "Feng",
+    "category": "Productivity",
+    "capabilities": [
+      "Local HTTP",
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use DSH Web to implement this task, then verify its changes.",
+      "Continue this task in the existing DSH Web session.",
+      "Ask DSH Web to fix the failing tests and validate the result."
+    ]
+  }
+}
