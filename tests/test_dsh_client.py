@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -426,6 +427,23 @@ class DshClientTests(unittest.TestCase):
         self.assertTrue(result.started)
         self.assertEqual(result.pid, 1234)
         launch.assert_called_once()
+
+    def test_launch_dsh_does_not_use_a_shell(self) -> None:
+        process = mock.sentinel.process
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            dsh_client.subprocess, "Popen", return_value=process
+        ) as popen:
+            result = dsh_client.launch_dsh(
+                "/usr/local/bin/dsh",
+                "127.0.0.1",
+                8765,
+                Path(directory) / "dsh.log",
+            )
+        self.assertIs(result, process)
+        command = popen.call_args.args[0]
+        options = popen.call_args.kwargs
+        self.assertEqual(command[0], "/usr/local/bin/dsh")
+        self.assertNotIn("shell", options)
 
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")

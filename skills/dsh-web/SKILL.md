@@ -25,6 +25,42 @@ In the examples below, replace `<python>` with the selected launcher and
 `<client>` with `<skill-directory>/scripts/dsh_client.py`. Keep `py -3` as two
 arguments rather than one quoted executable name.
 
+The client subcommands are platform-neutral. Only the Python launcher and path
+syntax vary:
+
+| Platform | Invocation shape |
+| --- | --- |
+| macOS / Linux | `python3 <absolute-client-path> <command> [arguments]` |
+| Windows | `py -3 <absolute-client-path> <command> [arguments]` |
+
+If the preferred launcher is unavailable, use the verified fallback selected
+above without changing the client command or its arguments.
+
+## Use a shell-independent command path
+
+- Do not require `zsh`, `bash`, or the user's login shell. The bundled client is
+  Python and launches `dsh` directly with an argument vector, without
+  `shell=True`.
+- Do not rely on the task's inherited working directory or `$PWD`. Resolve the
+  target repository to an absolute path first and set the command tool's
+  `workdir` explicitly for every invocation. Use the skill directory for
+  `doctor`, `start`, and `health`; use the verified repository path for
+  repository inspection and validation.
+- On POSIX systems, when the command tool supports shell selection, prefer a
+  non-login `/bin/sh` invocation. On Windows, use PowerShell or `cmd.exe` as
+  provided by the command tool. Pass client arguments separately instead of
+  using shell variables, command substitution, or shell startup files.
+- Treat a shell exposed by the command tool only as its process transport. Do
+  not generate platform-specific shell scripts for the collaboration loop, and
+  do not transpose POSIX syntax such as `$PWD` or `$(...)` onto Windows.
+- If process creation reports `No such file or directory`, check the explicit
+  `workdir` and requested executable separately. A deleted or renamed workspace
+  directory causes the same error before any shell starts.
+- If the inherited task directory is stale, retry once from the existing skill
+  directory with an explicit `workdir`, then pass the real repository path to
+  `create --cwd`. Report the stale workspace path; do not probe alternate login
+  shells.
+
 ## Run the collaboration loop
 
 1. Check the local server:
@@ -73,7 +109,7 @@ arguments rather than one quoted executable name.
 2. Create one session rooted at the target repository:
 
    ```text
-   <python> <client> create --cwd <absolute-repository-path>
+   <python> <client> create --cwd <verified-absolute-repository-path>
    ```
 
    Capture the printed session ID and reuse it for the complete task.

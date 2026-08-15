@@ -68,8 +68,22 @@ dsh --version
 参数会按平台选择，日志写入操作系统临时目录，外部浏览器回退使用 Python
 标准库。Codex Browser/WebView 仍是首选 UI。
 
+插件不依赖 `zsh`、`bash` 或其他登录 shell。Codex 应从明确存在的工作目录
+直接运行 Python 客户端，并通过 `create --cwd` 传入目标仓库的绝对路径。任务
+保存的旧目录被删除或改名时，进程可能在任何 shell 启动前就返回 `No such
+file or directory`；这不能说明 `zsh` 缺失。
+
 文档中的 macOS/Linux 示例使用 `python3`。Windows 请替换为 `py -3`；
 如果 `python` 指向 Python 3.9 或更高版本，也可以在任意平台使用。
+
+| 平台 | Python 检查 | 客户端调用 |
+| --- | --- | --- |
+| macOS / Linux | `python3 --version` | `python3 "/插件绝对路径/skills/dsh-web/scripts/dsh_client.py" <命令>` |
+| Windows PowerShell | `py -3 --version` | `py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" <命令>` |
+| Windows 命令提示符 | `py -3 --version` | `py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" <命令>` |
+
+这些只是 Python 启动器的差异，不是三套实现。所有平台运行同一个 Python
+客户端，使用相同的子命令和 HTTP API。
 
 ## 安装
 
@@ -136,32 +150,40 @@ DSH Web 当前把选中的会话保存在前端状态中，切换会话后 URL �
 
 无需安装插件也可以验证 HTTP 客户端：
 
-```bash
-CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
-
-python3 "$CLIENT" doctor
-python3 "$CLIENT" start
-python3 "$CLIENT" health
-SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
-python3 "$CLIENT" run "$SESSION_ID" "读取 README.md 并概括项目，不要修改文件"
-python3 "$CLIENT" history "$SESSION_ID" --messages
+```text
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py doctor
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py start
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py health
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py run <session-id> "读取 README.md 并概括项目，不要修改文件"
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py history <session-id> --messages
 ```
 
 继续同一个会话：
 
-```bash
-python3 "$CLIENT" run "$SESSION_ID" \
-  "验证结果：测试仍有一个失败，相关错误如下：<error>。请继续修复。"
+```text
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py run <session-id> "验证结果：测试仍有一个失败，相关错误如下：<error>。请继续修复。"
 ```
 
 PowerShell 使用相同客户端，无需 POSIX shell 语法：
 
 ```powershell
-$Client = Join-Path $PWD "skills/dsh-web/scripts/dsh_client.py"
+$Client = "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py"
+$Repository = "C:\仓库绝对路径"
 py -3 $Client doctor
 py -3 $Client start
-$SessionId = py -3 $Client create --cwd $PWD
+$SessionId = py -3 $Client create --cwd $Repository
 py -3 $Client run $SessionId "读取 README.md 并概括项目，不要修改文件"
+```
+
+Windows 命令提示符也可以直接调用客户端。保留 `create` 输出的 session ID，
+并传给下一条命令：
+
+```bat
+py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" doctor
+py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" start
+py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\仓库绝对路径"
+py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" run <session-id> "读取 README.md 并概括项目，不要修改文件"
 ```
 
 ### 客户端命令
@@ -204,11 +226,10 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py .
 
 端到端验证会调用真实模型，可能产生 API 费用：
 
-```bash
-CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
-python3 "$CLIENT" start
-SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
-python3 "$CLIENT" run "$SESSION_ID" "读取 README.md，只回复项目名称，不修改文件"
+```text
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py start
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py run <session-id> "读取 README.md，只回复项目名称，不修改文件"
 ```
 
 成功标准：命令返回 DSH 回答，浏览器中的 DSH 侧边栏选中了对应标题，并展示该 session 的对话与轨迹。URL 本身仍保持 `http://127.0.0.1:8765/`。

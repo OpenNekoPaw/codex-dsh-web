@@ -71,8 +71,23 @@ operating system temporary directory, and uses the Python default-browser API
 for its external-browser fallback. The Codex Browser/WebView remains the
 preferred UI surface.
 
+The plugin does not require `zsh`, `bash`, or another login shell. Codex should
+run the Python client with an explicit existing working directory and pass the
+target repository through `create --cwd`. A stale task directory can produce a
+process-spawn `No such file or directory` error before any shell starts; that is
+not evidence that `zsh` is missing.
+
 Examples use `python3` on macOS and Linux. On Windows, replace it with `py -3`;
 `python` is also valid on any platform when it resolves to Python 3.9 or later.
+
+| Platform | Python check | Client invocation |
+| --- | --- | --- |
+| macOS / Linux | `python3 --version` | `python3 "/absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py" <command>` |
+| Windows PowerShell | `py -3 --version` | `py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" <command>` |
+| Windows Command Prompt | `py -3 --version` | `py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" <command>` |
+
+These are launcher differences, not separate implementations. Every platform
+runs the same Python client and uses the same client subcommands and HTTP API.
 
 ## Installation
 
@@ -149,32 +164,40 @@ The current HTTP API client creates sessions with a working directory only. Chan
 
 You can test the HTTP client without installing the plugin:
 
-```bash
-CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
-
-python3 "$CLIENT" doctor
-python3 "$CLIENT" start
-python3 "$CLIENT" health
-SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
-python3 "$CLIENT" run "$SESSION_ID" "Read README.md and summarize the project. Do not modify files."
-python3 "$CLIENT" history "$SESSION_ID" --messages
+```text
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py doctor
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py start
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py health
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py run <session-id> "Read README.md and summarize the project. Do not modify files."
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py history <session-id> --messages
 ```
 
 Continue the same session:
 
-```bash
-python3 "$CLIENT" run "$SESSION_ID" \
-  "Validation result: one test still fails with <error>. Please continue fixing it."
+```text
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py run <session-id> "Validation result: one test still fails with <error>. Please continue fixing it."
 ```
 
 PowerShell uses the same client without POSIX shell syntax:
 
 ```powershell
-$Client = Join-Path $PWD "skills/dsh-web/scripts/dsh_client.py"
+$Client = "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py"
+$Repository = "C:\absolute\repository\path"
 py -3 $Client doctor
 py -3 $Client start
-$SessionId = py -3 $Client create --cwd $PWD
+$SessionId = py -3 $Client create --cwd $Repository
 py -3 $Client run $SessionId "Read README.md and summarize the project. Do not modify files."
+```
+
+Windows Command Prompt can invoke the client directly as well. Keep the
+session ID printed by `create` and pass it to the next command:
+
+```bat
+py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" doctor
+py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" start
+py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\absolute\repository\path"
+py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" run <session-id> "Read README.md and summarize the project. Do not modify files."
 ```
 
 ### Client commands
@@ -217,11 +240,10 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py .
 
 An end-to-end test calls a real model and may incur API charges:
 
-```bash
-CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
-python3 "$CLIENT" start
-SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
-python3 "$CLIENT" run "$SESSION_ID" "Read README.md and reply with only the project name. Do not modify files."
+```text
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py start
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py run <session-id> "Read README.md and reply with only the project name. Do not modify files."
 ```
 
 The test succeeds when the command returns a DSH answer and the browser's DSH

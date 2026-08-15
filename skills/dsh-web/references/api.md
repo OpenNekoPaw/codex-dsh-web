@@ -28,6 +28,11 @@ The expected response repeats the request ID:
 Treat a response type other than `server-response`, a mismatched `rpcId`, a
 non-object `result`, or `result.ok` set to false as a protocol error.
 
+The Python client does not require a POSIX login shell. It calls DSH with an
+argument vector and the platform subprocess API. Run it from an explicitly
+verified working directory; a stale `cwd` can make process creation fail before
+`/bin/sh`, `zsh`, PowerShell, or the requested executable starts.
+
 ## Methods
 
 | Method | Payload | Important result |
@@ -79,6 +84,9 @@ selected state and conversation header.
 - Connection refused: DSH Web is not listening at `DSH_URL`.
 - Missing Python: use Python 3.9 or later. On Windows, `py -3` is a supported
   launcher; on macOS and Linux, prefer `python3`.
+- Process spawn `No such file or directory`: verify the command tool's explicit
+  working directory first, then verify the executable. Do not diagnose a missing
+  `zsh`; this client never requires it.
 - Missing DSH: run `doctor`, install Node.js/npm if needed, then install
   DeepSeek Harness with `npm install --global @deepseek-ai/dsh` only after the
   user authorizes installation.

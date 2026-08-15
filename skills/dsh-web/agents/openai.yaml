@@ -1,4 +1,4 @@
 interface:
   display_name: "DSH Web"
   short_description: "Drive DSH Web sessions from Codex"
-  default_prompt: "Use $dsh-web to open DSH Web in Codex's built-in browser. If I include a task, delegate it to DSH, select that active session in the UI, and verify the result."
+  default_prompt: "Use $dsh-web through its shell-independent Python client, open DSH Web in Codex's built-in browser, select the active session, and verify the result."
