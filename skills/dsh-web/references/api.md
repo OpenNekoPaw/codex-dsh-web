@@ -33,6 +33,7 @@ non-object `result`, or `result.ok` set to false as a protocol error.
 | Method | Payload | Important result |
 | --- | --- | --- |
 | `session.create` | `{"cwd":"/absolute/path"}` | `value.sessionId` |
+| `session.rename` | `{"sessionId":"...","title":"..."}` | normalized `value.title` and event `seq` |
 | `session.prompt` | `{"sessionId":"...","mode":"queue","content":[{"type":"text","text":"..."}]}` | acknowledgement |
 | `session.history` | `{"sessionId":"..."}` | `value.events[]` |
 | `session.list` | `{}` | session collection; current servers expose `items[].running` |
@@ -61,10 +62,29 @@ ID. This protects bundled-client callers. Prompts sent manually in the DSH UI or
 through another client remain external concurrency and should use a separate
 session.
 
+`dispatch` performs the same idle check and pre-prompt history snapshot but
+returns the prompt `rpcId`, history count, and sequence cursor instead of waiting.
+Pass that receipt to `wait --rpc-id ...` after selecting the session in the UI.
+This preserves correlation even when the turn completes before browser
+selection finishes.
+
+The browser UI does not expose a per-session route in DSH Web 0.1.0-rc.6. Its
+address remains the base `/` URL after a session is selected. `ui-target` reads
+the `projections.values.title` field from the tail `session.history` response;
+Codex must search for and click that title in the session tree, then verify the
+selected state and conversation header.
+
 ## Common failures
 
 - Connection refused: DSH Web is not listening at `DSH_URL`.
+- Missing Python: use Python 3.9 or later. On Windows, `py -3` is a supported
+  launcher; on macOS and Linux, prefer `python3`.
+- Missing DSH: run `doctor`, install Node.js/npm if needed, then install
+  DeepSeek Harness with `npm install --global @deepseek-ai/dsh` only after the
+  user authorizes installation.
 - HTTP 403: the request authority may have failed the browser trust fence; use loopback and check DSH Web's `--trusted-host` support.
 - HTTP 404: the running DSH Web version may not expose the expected method.
 - RPC error: inspect the returned error object and session history.
-- Wait timeout: inspect `history --messages`, `list`, and `/tmp/dsh-web.log`; do not blindly create another session.
+- Local startup failure: use the log path printed by `start` or `doctor`; it is
+  stored in the operating system's temporary directory.
+- Wait timeout: inspect `history --messages`, `list`, and the reported server log; do not blindly create another session.

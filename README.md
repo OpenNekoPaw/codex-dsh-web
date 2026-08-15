@@ -45,17 +45,34 @@ The plugin ID is `codex-dsh-web`, its display name is **DSH Web for Codex**, and
 
 ## Requirements
 
-- `dsh` is installed and `dsh --profile web --help` works.
+- Python 3.9 or later. The client uses only the Python standard library.
+- DeepSeek Harness is installed and `dsh --profile web --help` works. Its npm
+  package is `@deepseek-ai/dsh`.
 - A DeepSeek API key is configured in the DSH Web Models page or inherited environment.
 - Codex can access the loopback network and write to the target repository and `DSH_HOME` (normally `~/.dsh`).
-- Python 3.9 or later. The client uses only the Python standard library.
 
-Start DSH Web:
+Install DSH manually when needed:
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
-open http://127.0.0.1:8765
+npm install --global @deepseek-ai/dsh
+dsh --version
 ```
+
+The plugin does not install Python, Node.js, npm, or DSH during plugin
+installation. On first use, the skill checks for Python 3.9+, then checks DSH
+only when the configured server is unavailable. It explains the missing
+dependency and asks before running any installer.
+
+### Platform support
+
+The dependency-free client supports macOS, Linux, and Windows. It uses
+platform-specific file locking and detached-process flags, stores logs in the
+operating system temporary directory, and uses the Python default-browser API
+for its external-browser fallback. The Codex Browser/WebView remains the
+preferred UI surface.
+
+Examples use `python3` on macOS and Linux. On Windows, replace it with `py -3`;
+`python` is also valid on any platform when it resolves to Python 3.9 or later.
 
 ## Installation
 
@@ -103,9 +120,15 @@ Use $dsh-web for this task and open the DSH Web UI in the built-in browser.
 ```
 
 Codex Desktop should open `DSH_URL` in its Browser/WebView panel. When that
-surface is unavailable, the client's `open` command falls back to the macOS
+surface is unavailable, the client's `open` command falls back to the platform
 default browser. Opening the page alone does not replace API-based result
 collection; UI inspection or interaction must be explicitly requested.
+
+DSH Web currently keeps the selected session in client-side state: choosing a
+session does not change the `/` URL. For an API-driven task, the skill assigns a
+unique title, dispatches the prompt, searches that title in the DSH sidebar,
+clicks it, and verifies the selected conversation header. A tab that still shows
+the New Session composer is not considered synchronized with the active session.
 
 The first plugin starter prompt performs this UI-only action, so opening the
 plugin without an implementation request should still open the Browser panel
@@ -129,6 +152,8 @@ You can test the HTTP client without installing the plugin:
 ```bash
 CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
 
+python3 "$CLIENT" doctor
+python3 "$CLIENT" start
 python3 "$CLIENT" health
 SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
 python3 "$CLIENT" run "$SESSION_ID" "Read README.md and summarize the project. Do not modify files."
@@ -142,19 +167,34 @@ python3 "$CLIENT" run "$SESSION_ID" \
   "Validation result: one test still fails with <error>. Please continue fixing it."
 ```
 
+PowerShell uses the same client without POSIX shell syntax:
+
+```powershell
+$Client = Join-Path $PWD "skills/dsh-web/scripts/dsh_client.py"
+py -3 $Client doctor
+py -3 $Client start
+$SessionId = py -3 $Client create --cwd $PWD
+py -3 $Client run $SessionId "Read README.md and summarize the project. Do not modify files."
+```
+
 ### Client commands
 
 | Command | Purpose |
 | --- | --- |
+| `doctor` | Report Python, DSH, npm, and server readiness without installing anything |
 | `health` | Check whether DSH Web is reachable |
+| `start` | Reuse or start a detached local loopback DSH Web service and report its log path |
 | `create` | Create a session rooted at a target directory |
+| `rename` | Pin a stable, unique title for exact browser selection |
+| `ui-target` | Print the base UI URL and projected title for a session |
 | `run` | Lock the session, reject an already-running session, send a prompt, and wait for its correlated turn |
+| `dispatch` | Send a prompt and print its RPC ID plus the pre-prompt history cursor for UI-first waiting |
 | `prompt` | Send a prompt without waiting |
-| `wait` | Snapshot current history and wait for a subsequent `turn/end`; optional cursor flags resume from an earlier point |
+| `wait` | Wait for a later or explicitly correlated `turn/end`; cursor flags and `--rpc-id` resume a `dispatch` receipt |
 | `history` | Print raw history or a compact transcript |
 | `list` | List DSH sessions |
 | `cancel` | Cancel a session |
-| `open` | Open DSH Web in the macOS default browser as a fallback |
+| `open` | Open DSH Web in the platform default browser as a fallback |
 
 ### Environment variables
 
@@ -164,6 +204,7 @@ python3 "$CLIENT" run "$SESSION_ID" \
 | `DSH_HTTP_TIMEOUT` | `30` | Timeout for each HTTP request in seconds |
 | `DSH_TIMEOUT` | `600` | Timeout while waiting for a turn in seconds |
 | `DSH_POLL_INTERVAL` | `2` | History polling interval in seconds |
+| `DSH_STARTUP_TIMEOUT` | `20` | Timeout while starting a local DSH Web service in seconds |
 
 ## Validate a development version
 
@@ -177,13 +218,15 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py .
 An end-to-end test calls a real model and may incur API charges:
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
 CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
+python3 "$CLIENT" start
 SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
 python3 "$CLIENT" run "$SESSION_ID" "Read README.md and reply with only the project name. Do not modify files."
 ```
 
-The test succeeds when the command returns a DSH answer and `http://127.0.0.1:8765` shows the same session and trace.
+The test succeeds when the command returns a DSH answer and the browser's DSH
+sidebar has selected that session title, with its conversation and trace visible.
+The URL itself remains `http://127.0.0.1:8765/`.
 
 ### Session concurrency
 
@@ -208,9 +251,21 @@ codex plugin add codex-dsh-web@codex-dsh-web
 ### `health` reports connection refused
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
-tail -n 100 /tmp/dsh-web.log
+python3 skills/dsh-web/scripts/dsh_client.py doctor
+python3 skills/dsh-web/scripts/dsh_client.py start
 ```
+
+`start` prints the platform-specific log path when startup fails.
+
+### Python or DSH is missing
+
+Use Python 3.9 or later. Try `python3 --version` or `python --version` on macOS
+and Linux, and `py -3 --version` on Windows. Install Python only after the user
+approves use of the platform installer.
+
+If `doctor` reports that DSH is missing, install Node.js/npm first when needed,
+then run `npm install --global @deepseek-ai/dsh`. The skill must ask before
+running either installation.
 
 ### Codex cannot find `$dsh-web`
 

@@ -45,17 +45,31 @@ codex-dsh-web/
 
 ## 前置条件
 
-- 已安装 `dsh`，并且 `dsh --profile web --help` 可运行。
+- Python 3.9 或更高版本；客户端仅使用 Python 标准库。
+- 已安装 DeepSeek Harness，并且 `dsh --profile web --help` 可运行；对应
+  npm 包为 `@deepseek-ai/dsh`。
 - 已在 DSH Web Models 页面或环境变量中配置 DeepSeek API Key。
 - Codex 允许访问本机回环网络，并能写入目标仓库和 `DSH_HOME`（通常是 `~/.dsh`）。
-- Python 3.9 或更高版本；客户端仅使用标准库。
 
-启动 DSH Web：
+需要时可手动安装 DSH：
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
-open http://127.0.0.1:8765
+npm install --global @deepseek-ai/dsh
+dsh --version
 ```
+
+安装插件时不会自动安装 Python、Node.js、npm 或 DSH。首次使用时，skill
+先检查 Python 3.9+；只有配置的 DSH Web 服务不可用时才检查本机 DSH。
+依赖缺失时会说明原因，并在执行任何安装器之前征求用户同意。
+
+### 平台支持
+
+无第三方依赖的客户端支持 macOS、Linux 和 Windows。文件锁和后台进程
+参数会按平台选择，日志写入操作系统临时目录，外部浏览器回退使用 Python
+标准库。Codex Browser/WebView 仍是首选 UI。
+
+文档中的 macOS/Linux 示例使用 `python3`。Windows 请替换为 `py -3`；
+如果 `python` 指向 Python 3.9 或更高版本，也可以在任意平台使用。
 
 ## 安装
 
@@ -102,7 +116,9 @@ skill 的描述允许隐式触发，但 Codex 不会仅因为端口 `8765` 已�
 使用 $dsh-web 完成这个任务，并在内置浏览器中打开 DSH Web UI。
 ```
 
-Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到 macOS 默认浏览器。仅打开页面不能替代通过 API 读取结果；需要 Codex 检查或操作 UI 时应明确提出。
+Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到当前平台默认浏览器。仅打开页面不能替代通过 API 读取结果；需要 Codex 检查或操作 UI 时应明确提出。
+
+DSH Web 当前把选中的会话保存在前端状态中，切换会话后 URL 仍是 `/`，不存在可直接拼接的会话路由。对于 API 驱动的任务，skill 会先设置唯一标题、派发 prompt，再在 DSH 侧边栏搜索并点击该标题，最后校验会话条目已选中且对话标题一致。仍显示“新会话”输入页不算已经切换到本次调用的 session。
 
 插件的第一条 starter prompt 只执行打开 UI 的动作，因此即使没有附带实现任务，也应直接打开 Browser 面板，而不是追问要修改什么代码。仅显示 URL 链接或网页预览卡片不算已经打开面板。
 
@@ -123,6 +139,8 @@ Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面
 ```bash
 CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
 
+python3 "$CLIENT" doctor
+python3 "$CLIENT" start
 python3 "$CLIENT" health
 SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
 python3 "$CLIENT" run "$SESSION_ID" "读取 README.md 并概括项目，不要修改文件"
@@ -136,19 +154,34 @@ python3 "$CLIENT" run "$SESSION_ID" \
   "验证结果：测试仍有一个失败，相关错误如下：<error>。请继续修复。"
 ```
 
+PowerShell 使用相同客户端，无需 POSIX shell 语法：
+
+```powershell
+$Client = Join-Path $PWD "skills/dsh-web/scripts/dsh_client.py"
+py -3 $Client doctor
+py -3 $Client start
+$SessionId = py -3 $Client create --cwd $PWD
+py -3 $Client run $SessionId "读取 README.md 并概括项目，不要修改文件"
+```
+
 ### 客户端命令
 
 | 命令 | 用途 |
 | --- | --- |
+| `doctor` | 检查 Python、DSH、npm 和服务状态，不执行安装 |
 | `health` | 检查 DSH Web 是否可访问 |
+| `start` | 复用或后台启动本机 loopback DSH Web，并输出日志路径 |
 | `create` | 为目标目录创建 session |
+| `rename` | 固定唯一标题，供内置浏览器精确选择 session |
+| `ui-target` | 输出 session 对应的基础 UI 地址和投影标题 |
 | `run` | 锁定 session、拒绝正在运行的 session、发送消息并等待与本次请求关联的 turn |
+| `dispatch` | 发送消息并输出 RPC ID 与发送前历史游标，便于先切换 UI 再等待 |
 | `prompt` | 只发送消息，不等待 |
-| `wait` | 快照当前历史并等待后续 `turn/end`；可用游标参数从较早位置继续 |
+| `wait` | 等待后续或明确关联的 `turn/end`；可用游标参数和 `--rpc-id` 承接 `dispatch` |
 | `history` | 输出原始历史或精简消息 |
 | `list` | 列出 DSH sessions |
 | `cancel` | 取消指定 session |
-| `open` | 作为回退方案，在 macOS 默认浏览器打开 DSH Web |
+| `open` | 作为回退方案，在当前平台默认浏览器打开 DSH Web |
 
 ### 环境变量
 
@@ -158,6 +191,7 @@ python3 "$CLIENT" run "$SESSION_ID" \
 | `DSH_HTTP_TIMEOUT` | `30` | 单次 HTTP 请求超时秒数 |
 | `DSH_TIMEOUT` | `600` | 等待一轮完成的超时秒数 |
 | `DSH_POLL_INTERVAL` | `2` | 历史轮询间隔秒数 |
+| `DSH_STARTUP_TIMEOUT` | `20` | 启动本机 DSH Web 的超时秒数 |
 
 ## 验证开发版本
 
@@ -171,13 +205,13 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py .
 端到端验证会调用真实模型，可能产生 API 费用：
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
 CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
+python3 "$CLIENT" start
 SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
 python3 "$CLIENT" run "$SESSION_ID" "读取 README.md，只回复项目名称，不修改文件"
 ```
 
-成功标准：命令返回 DSH 回答，并且浏览器中的 `http://127.0.0.1:8765` 出现相同 session 的对话与轨迹。
+成功标准：命令返回 DSH 回答，浏览器中的 DSH 侧边栏选中了对应标题，并展示该 session 的对话与轨迹。URL 本身仍保持 `http://127.0.0.1:8765/`。
 
 ### Session 并发
 
@@ -201,9 +235,20 @@ codex plugin add codex-dsh-web@codex-dsh-web
 ### `health` 提示连接被拒绝
 
 ```bash
-dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
-tail -n 100 /tmp/dsh-web.log
+python3 skills/dsh-web/scripts/dsh_client.py doctor
+python3 skills/dsh-web/scripts/dsh_client.py start
 ```
+
+启动失败时，`start` 会输出当前平台对应的日志路径。
+
+### 缺少 Python 或 DSH
+
+需要 Python 3.9 或更高版本。macOS/Linux 可检查 `python3 --version` 或
+`python --version`，Windows 可检查 `py -3 --version`。只有用户同意后才可
+使用平台安装器安装 Python。
+
+若 `doctor` 提示缺少 DSH，先在需要时安装 Node.js/npm，再执行
+`npm install --global @deepseek-ai/dsh`。skill 在执行这些安装前必须先征求同意。
 
 ### Codex 找不到 `$dsh-web`
 
