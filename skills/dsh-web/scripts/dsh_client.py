@@ -4,17 +4,22 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import hashlib
 import json
+import math
 import os
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Iterator, NoReturn
 
 
 DEFAULT_URL = "http://127.0.0.1:8765"
@@ -30,6 +35,12 @@ class HistoryCursor:
     sequence: int | None
 
 
+@dataclass(frozen=True)
+class RpcResponse:
+    rpc_id: str
+    value: Any
+
+
 def env_float(name: str, default: float) -> float:
     raw_value = os.environ.get(name)
     if raw_value is None:
@@ -38,8 +49,8 @@ def env_float(name: str, default: float) -> float:
         value = float(raw_value)
     except ValueError as error:
         raise DshClientError(f"{name} must be a number, got {raw_value!r}") from error
-    if value <= 0:
-        raise DshClientError(f"{name} must be greater than zero")
+    if not math.isfinite(value) or value <= 0:
+        raise DshClientError(f"{name} must be a finite number greater than zero")
     return value
 
 
@@ -53,7 +64,7 @@ class DshClient:
         self.base_url = base_url.rstrip("/")
         self.http_timeout = http_timeout
 
-    def post(self, method: str, payload: dict[str, Any]) -> Any:
+    def post_with_rpc_id(self, method: str, payload: dict[str, Any]) -> RpcResponse:
         rpc_id = str(uuid.uuid4())
         envelope = {
             "type": "client-request",
@@ -75,10 +86,12 @@ class DshClient:
             suffix = f": {detail}" if detail else ""
             raise DshClientError(f"HTTP {error.code} calling {method}{suffix}") from error
         except urllib.error.URLError as error:
+            if isinstance(error.reason, (TimeoutError, socket.timeout)):
+                raise DshClientError(f"HTTP timeout calling {method}") from error
             raise DshClientError(
                 f"cannot reach {self.base_url} while calling {method}: {error.reason}"
             ) from error
-        except TimeoutError as error:
+        except (TimeoutError, socket.timeout) as error:
             raise DshClientError(f"HTTP timeout calling {method}") from error
 
         try:
@@ -87,6 +100,8 @@ class DshClient:
             raise DshClientError(f"invalid JSON response from {method}") from error
         if not isinstance(response_payload, dict):
             raise DshClientError(f"invalid response envelope from {method}")
+        if response_payload.get("type") != "server-response":
+            raise DshClientError(f"invalid response type from {method}")
         if response_payload.get("rpcId") != rpc_id:
             raise DshClientError(f"rpcId mismatch in response from {method}")
         result = response_payload.get("result")
@@ -97,7 +112,10 @@ class DshClient:
             raise DshClientError(f"RPC {method} failed: {format_error(error)}")
         if "value" not in result:
             raise DshClientError(f"missing result.value in response from {method}")
-        return result["value"]
+        return RpcResponse(rpc_id=rpc_id, value=result["value"])
+
+    def post(self, method: str, payload: dict[str, Any]) -> Any:
+        return self.post_with_rpc_id(method, payload).value
 
     def health(self) -> None:
         request = urllib.request.Request(self.base_url, method="GET")
@@ -108,8 +126,10 @@ class DshClient:
         except urllib.error.HTTPError as error:
             raise DshClientError(f"health check returned HTTP {error.code}") from error
         except urllib.error.URLError as error:
+            if isinstance(error.reason, (TimeoutError, socket.timeout)):
+                raise DshClientError("health check timed out") from error
             raise DshClientError(f"cannot reach {self.base_url}: {error.reason}") from error
-        except TimeoutError as error:
+        except (TimeoutError, socket.timeout) as error:
             raise DshClientError("health check timed out") from error
 
     def create(self, cwd: str) -> str:
@@ -119,7 +139,10 @@ class DshClient:
         return value["sessionId"]
 
     def prompt(self, session_id: str, text: str, mode: str) -> Any:
-        return self.post(
+        return self.prompt_with_rpc_id(session_id, text, mode).value
+
+    def prompt_with_rpc_id(self, session_id: str, text: str, mode: str) -> RpcResponse:
+        return self.post_with_rpc_id(
             "session.prompt",
             {
                 "sessionId": session_id,
@@ -167,10 +190,36 @@ def events_after_cursor(
         return events[cursor.length :]
     return [
         item
-        for item in events
-        if (sequence := event_sequence(unwrap_event(item))) is not None
-        and sequence > cursor.sequence
+        for index, item in enumerate(events)
+        if index >= cursor.length
+        or (
+            (sequence := event_sequence(unwrap_event(item))) is not None
+            and sequence > cursor.sequence
+        )
     ]
+
+
+def event_turn(event: dict[str, Any]) -> int | str | None:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    turn = data.get("turn")
+    if isinstance(turn, bool) or not isinstance(turn, (int, str)):
+        return None
+    return turn
+
+
+def event_prompt_rpc_id(event: dict[str, Any]) -> str | None:
+    if event.get("type") != "user/message":
+        return None
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    source = data.get("source")
+    if not isinstance(source, dict):
+        return None
+    rpc_id = source.get("rpcId")
+    return rpc_id if isinstance(rpc_id, str) else None
 
 
 def extract_message(event: dict[str, Any]) -> str:
@@ -220,30 +269,166 @@ def wait_for_turn(
     cursor: HistoryCursor,
     timeout: float,
     poll_interval: float,
+    prompt_rpc_id: str | None = None,
 ) -> str:
     deadline = time.monotonic() + timeout
     latest_message = ""
     while time.monotonic() < deadline:
         events = events_after_cursor(client.history(session_id), cursor)
+        active_turn: int | str | None = None
+        target_turn: int | str | None = None
+        messages_by_turn: dict[int | str, str] = {}
+        reasons_by_turn: dict[int | str, dict[str, Any]] = {}
         for item in events:
             event = unwrap_event(item)
-            if event.get("type") == "assistant/message":
+            event_type = event.get("type")
+            turn = event_turn(event)
+            if event_type == "turn/start":
+                active_turn = turn
+            elif prompt_rpc_id is not None and event_prompt_rpc_id(event) == prompt_rpc_id:
+                target_turn = turn if turn is not None else active_turn
+            elif event_type == "assistant/message":
                 message = extract_message(event)
-                if message:
+                message_turn = turn if turn is not None else active_turn
+                if prompt_rpc_id is not None and message_turn is not None and message:
+                    messages_by_turn[message_turn] = message
+                elif prompt_rpc_id is None and message:
                     latest_message = message
-            elif event.get("type") == "turn/end":
+            elif event_type == "turn/end":
                 reason = turn_reason(event)
                 if reason is None:
                     raise DshClientError("turn/end did not contain a reason")
-                kind = reason.get("kind")
-                if kind == "completed":
-                    return latest_message
-                error = reason.get("error") or reason.get("failure") or reason
-                raise DshClientError(f"turn ended with {kind or 'unknown'}: {format_error(error)}")
+                reason_turn = turn if turn is not None else active_turn
+                if prompt_rpc_id is not None and reason_turn is not None:
+                    reasons_by_turn[reason_turn] = reason
+                elif prompt_rpc_id is None:
+                    return finish_turn(latest_message, reason)
+
+        if target_turn is not None and target_turn in reasons_by_turn:
+            return finish_turn(
+                messages_by_turn.get(target_turn, ""), reasons_by_turn[target_turn]
+            )
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(min(poll_interval, remaining))
-    raise DshClientError(f"timeout after {timeout:g}s waiting for turn/end")
+    suffix = " for the prompted turn" if prompt_rpc_id is not None else ""
+    raise DshClientError(f"timeout after {timeout:g}s waiting for turn/end{suffix}")
+
+
+def finish_turn(message: str, reason: dict[str, Any]) -> str:
+    kind = reason.get("kind")
+    if kind == "completed":
+        return message
+    error = reason.get("error") or reason.get("failure") or reason
+    raise DshClientError(f"turn ended with {kind or 'unknown'}: {format_error(error)}")
+
+
+def session_records(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        records = value
+    elif isinstance(value, dict):
+        records = value.get("items")
+        if not isinstance(records, list):
+            records = value.get("sessions")
+    else:
+        records = None
+    if not isinstance(records, list):
+        raise DshClientError("session.list did not return a session array")
+    return [record for record in records if isinstance(record, dict)]
+
+
+def ensure_session_idle(client: DshClient, session_id: str) -> None:
+    record = next(
+        (
+            item
+            for item in session_records(client.list_sessions())
+            if item.get("sessionId") == session_id
+        ),
+        None,
+    )
+    if record is None:
+        raise DshClientError(f"session not found: {session_id}")
+    if record.get("running") is True:
+        raise DshClientError(
+            "session is already running; wait for it to finish or use a separate session"
+        )
+
+
+@contextmanager
+def session_lock(base_url: str, session_id: str) -> Iterator[None]:
+    lock_root = Path(tempfile.gettempdir()) / "codex-dsh-web-locks"
+    lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    key = hashlib.sha256(f"{base_url}\0{session_id}".encode("utf-8")).hexdigest()
+    lock_path = lock_root / f"{key}.lock"
+    lock_file = lock_path.open("a+b")
+    acquired = False
+    try:
+        try:
+            lock_session_file(lock_file)
+            acquired = True
+        except OSError as error:
+            raise DshClientError(
+                "another local dsh_client run is already using this session"
+            ) from error
+        yield
+    finally:
+        try:
+            if acquired:
+                unlock_session_file(lock_file)
+        finally:
+            lock_file.close()
+
+
+def lock_session_file(lock_file: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        if not lock_file.read(1):
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def unlock_session_file(lock_file: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def run_prompt(
+    client: DshClient,
+    session_id: str,
+    text: str,
+    mode: str,
+    timeout: float,
+    poll_interval: float,
+) -> str:
+    with session_lock(client.base_url, session_id):
+        ensure_session_idle(client, session_id)
+        cursor = history_cursor(client.history(session_id))
+        response = client.prompt_with_rpc_id(session_id, text, mode)
+        return wait_for_turn(
+            client,
+            session_id,
+            cursor,
+            timeout,
+            poll_interval,
+            prompt_rpc_id=response.rpc_id,
+        )
 
 
 def compact_messages(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -317,20 +502,20 @@ def build_parser() -> argparse.ArgumentParser:
     wait_parser = subparsers.add_parser("wait", help="wait for a later turn/end")
     wait_parser.add_argument("session_id")
     wait_parser.add_argument("--after-seq", type=int)
-    wait_parser.add_argument("--after-count", type=int, default=0)
+    wait_parser.add_argument("--after-count", type=int)
 
     subparsers.add_parser("list", help="list sessions")
 
     cancel_parser = subparsers.add_parser("cancel", help="cancel a session")
     cancel_parser.add_argument("session_id")
 
-    subparsers.add_parser("open", help="open the DSH Web browser UI")
+    subparsers.add_parser("open", help="open DSH Web in the macOS default browser")
     return parser
 
 
 def validate_positive(parser: argparse.ArgumentParser, name: str, value: float) -> None:
-    if value <= 0:
-        parser.error(f"{name} must be greater than zero")
+    if not math.isfinite(value) or value <= 0:
+        parser.error(f"{name} must be a finite number greater than zero")
 
 
 def main() -> int:
@@ -339,6 +524,11 @@ def main() -> int:
     validate_positive(parser, "--http-timeout", args.http_timeout)
     validate_positive(parser, "--timeout", args.timeout)
     validate_positive(parser, "--poll-interval", args.poll_interval)
+    if args.command == "wait":
+        if args.after_seq is not None and args.after_seq < 0:
+            parser.error("--after-seq must be zero or greater")
+        if args.after_count is not None and args.after_count < 0:
+            parser.error("--after-count must be zero or greater")
     client = DshClient(args.url, args.http_timeout)
 
     if args.command == "health":
@@ -352,13 +542,12 @@ def main() -> int:
     elif args.command == "prompt":
         print(json.dumps(client.prompt(args.session_id, args.text, args.mode), ensure_ascii=False))
     elif args.command == "run":
-        cursor = history_cursor(client.history(args.session_id))
-        client.prompt(args.session_id, args.text, args.mode)
         print(
-            wait_for_turn(
+            run_prompt(
                 client,
                 args.session_id,
-                cursor,
+                args.text,
+                args.mode,
                 args.timeout,
                 args.poll_interval,
             )
@@ -368,7 +557,18 @@ def main() -> int:
         output = compact_messages(events) if args.messages else events
         print(json.dumps(output, ensure_ascii=False, indent=2))
     elif args.command == "wait":
-        cursor = HistoryCursor(length=args.after_count, sequence=args.after_seq)
+        current_events = client.history(args.session_id)
+        if args.after_count is None and args.after_seq is None:
+            cursor = history_cursor(current_events)
+        else:
+            cursor = HistoryCursor(
+                length=(
+                    args.after_count
+                    if args.after_count is not None
+                    else len(current_events)
+                ),
+                sequence=args.after_seq,
+            )
         print(
             wait_for_turn(
                 client,

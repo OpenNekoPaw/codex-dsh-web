@@ -25,6 +25,8 @@ Codex
 
 一个 DSH Web 进程可以同时承载多个独立 session。不同 Codex 任务默认创建不同的 `sessionId`，不会为每个会话启动一个新 DSH 服务进程。
 
+在 Codex Desktop 中，可以直接把 DSH 页面打开到内置 Browser/WebView 面板。HTTP API 仍是可靠的控制通道；内嵌页面负责展示对话与轨迹，并可在明确要求浏览器控制时供 Codex 检查或操作。
+
 ## 目录结构
 
 ```text
@@ -46,7 +48,7 @@ codex-dsh-web/
 - 已安装 `dsh`，并且 `dsh --profile web --help` 可运行。
 - 已在 DSH Web Models 页面或环境变量中配置 DeepSeek API Key。
 - Codex 允许访问本机回环网络，并能写入目标仓库和 `DSH_HOME`（通常是 `~/.dsh`）。
-- Python 3.10 或更高版本；客户端仅使用标准库。
+- Python 3.9 或更高版本；客户端仅使用标准库。
 
 启动 DSH Web：
 
@@ -94,6 +96,24 @@ skill 的描述允许隐式触发，但 Codex 不会仅因为端口 `8765` 已�
 然后由 Codex 独立检查改动并运行验证。
 ```
 
+若希望在 Codex 任务旁持续显示 DSH 界面，可以直接要求 Codex 打开：
+
+```text
+使用 $dsh-web 完成这个任务，并在内置浏览器中打开 DSH Web UI。
+```
+
+Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到 macOS 默认浏览器。仅打开页面不能替代通过 API 读取结果；需要 Codex 检查或操作 UI 时应明确提出。
+
+### DSH session 配置
+
+插件不强制固定的 agent preset、权限策略或模型：
+
+- `minimal` 是开销较低的实用默认值，但不是协议要求。
+- 只读分析使用 read-only，实现任务使用 workspace-write。仅在任务明确需要访问工作区以外资源时使用 danger-full-access。
+- DSH 模型应按任务质量、延迟和成本选择；客户端复用 session 已配置的模型，不硬编码具体模型。
+
+当前 HTTP 客户端创建 session 时只设置工作目录。若默认配置不合适，应先在 DSH Web 中调整 preset、权限或模型，再发送任务。
+
 ## 直接使用客户端
 
 无需安装插件也可以验证 HTTP 客户端：
@@ -120,13 +140,13 @@ python3 "$CLIENT" run "$SESSION_ID" \
 | --- | --- |
 | `health` | 检查 DSH Web 是否可访问 |
 | `create` | 为目标目录创建 session |
-| `run` | 发送消息并等待新一轮完成 |
+| `run` | 锁定 session、拒绝正在运行的 session、发送消息并等待与本次请求关联的 turn |
 | `prompt` | 只发送消息，不等待 |
-| `wait` | 等待后续 `turn/end` |
+| `wait` | 快照当前历史并等待后续 `turn/end`；可用游标参数从较早位置继续 |
 | `history` | 输出原始历史或精简消息 |
 | `list` | 列出 DSH sessions |
 | `cancel` | 取消指定 session |
-| `open` | 在 macOS 打开 DSH Web 页面 |
+| `open` | 作为回退方案，在 macOS 默认浏览器打开 DSH Web |
 
 ### 环境变量
 
@@ -156,6 +176,14 @@ python3 "$CLIENT" run "$SESSION_ID" "读取 README.md，只回复项目名称，
 ```
 
 成功标准：命令返回 DSH 回答，并且浏览器中的 `http://127.0.0.1:8765` 出现相同 session 的对话与轨迹。
+
+### Session 并发
+
+`run` 会按 `DSH_URL` 和 `sessionId` 获取跨进程本地锁，通过
+`session.list` 检查 session 是否正在运行，并使用 prompt RPC ID 关联对应
+的 DSH turn。同一个 session 应串行使用，并行任务应创建不同 session。
+在 DSH UI 中手动输入的消息或其他客户端发送的 prompt 不受本地锁保护，
+Codex 执行期间应使用不同 session，避免竞争。
 
 ## 更新安装
 
