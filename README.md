@@ -1,42 +1,79 @@
-# Codex DSH Web plugin
+# DSH Web for Codex
 
-This local Codex plugin lets Codex drive DSH Web through its HTTP API while the browser shows the same session's conversation, tool calls, and trace.
+English | [简体中文](README_CN.md)
 
-The `dsh-web` skill provides a dependency-free client and an iterative workflow:
+`codex-dsh-web` is a local Codex plugin that lets Codex collaborate with DeepSeek Harness through the DSH Web HTTP API.
 
-1. Create a DSH Web session for a repository.
-2. Send work to DSH and wait for the new turn to finish.
-3. Let Codex inspect and test the changes.
-4. Return validation feedback to the same session and repeat.
+Codex can create or reuse a DSH session, delegate development tasks, wait for DSH to finish, inspect the resulting files, and run local validation. When validation fails, Codex can send the result back to the same session and continue the implementation–verification loop. The DSH Web browser interface displays the same conversation, tool calls, and execution trace.
 
-## Prerequisites
+## How it works
 
-- `dsh` installed with the `web` profile available.
-- A configured DeepSeek API key, either in DSH Web's Models page or the inherited shell environment.
-- Codex network access to loopback and write access to the target repository and `DSH_HOME` (normally `~/.dsh`).
+```text
+Codex
+  │
+  ├─ POST /api/session.create ── create an isolated session
+  ├─ POST /api/session.prompt ── send a task or validation result
+  ├─ POST /api/session.history ─ wait for turn/end and read the answer
+  │
+  └─ inspect diffs and run test/lint/build locally
+                    │
+                    ▼
+          DSH Web http://127.0.0.1:8765
+          ├─ local HTTP API
+          └─ browser visualization
+```
 
-Start DSH Web on the default port:
+One DSH Web process can host multiple independent sessions. Separate Codex tasks normally create separate `sessionId` values while sharing the same service process.
+
+## Project structure
+
+```text
+codex-dsh-web/
+├── .codex-plugin/plugin.json
+├── skills/dsh-web/
+│   ├── SKILL.md
+│   ├── agents/openai.yaml
+│   ├── references/api.md
+│   └── scripts/dsh_client.py
+└── tests/test_dsh_client.py
+```
+
+The plugin ID is `codex-dsh-web`, its display name is **DSH Web for Codex**, and its skill is `$dsh-web`.
+
+## Requirements
+
+- `dsh` is installed and `dsh --profile web --help` works.
+- A DeepSeek API key is configured in the DSH Web Models page or inherited environment.
+- Codex can access the loopback network and write to the target repository and `DSH_HOME` (normally `~/.dsh`).
+- Python 3.10 or later. The client uses only the Python standard library.
+
+Start DSH Web:
 
 ```bash
 dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
 open http://127.0.0.1:8765
 ```
 
-## Development installation
+## Personal installation
 
-This repository is a plugin source. Place or copy it inside a local marketplace root, then point the marketplace entry at that in-root copy. For example, if the copy is at `<marketplace-root>/plugins/codex-dsh-skill`, use this entry in `<marketplace-root>/.agents/plugins/marketplace.json`:
+The default personal marketplace is `~/.agents/plugins/marketplace.json`, and personal plugin sources are commonly stored under `~/plugins/`:
+
+```bash
+git clone https://github.com/OpenNekoPaw/codex-dsh-web.git \
+  "$HOME/plugins/codex-dsh-web"
+mkdir -p "$HOME/.agents/plugins"
+```
+
+Create or merge the following marketplace configuration:
 
 ```json
 {
-  "name": "local-dsh",
-  "interface": {"displayName": "Local DSH"},
+  "name": "personal",
+  "interface": {"displayName": "Personal"},
   "plugins": [
     {
-      "name": "codex-dsh-skill",
-      "source": {
-        "source": "local",
-        "path": "./plugins/codex-dsh-skill"
-      },
+      "name": "codex-dsh-web",
+      "source": {"source": "local", "path": "./plugins/codex-dsh-web"},
       "policy": {
         "installation": "AVAILABLE",
         "authentication": "ON_INSTALL"
@@ -47,30 +84,134 @@ This repository is a plugin source. Place or copy it inside a local marketplace 
 }
 ```
 
-Register and install it:
+Codex discovers the default personal marketplace automatically, so do not run `codex plugin marketplace add` for this path. Restart the ChatGPT/Codex desktop app and install the plugin from **Plugins → Personal**, or use the CLI:
 
 ```bash
-codex plugin marketplace add <marketplace-root>
-codex plugin add codex-dsh-skill@local-dsh
+codex plugin add codex-dsh-web@personal
 ```
 
-Start a new Codex task after installation so the bundled skill is discovered. See OpenAI's [plugin packaging documentation](https://developers.openai.com/plugins/build/plugins) for personal and repository marketplace options.
+Start a new Codex task after installation. Existing tasks do not automatically load newly installed skills.
 
-For source-level testing, invoke the client directly:
+## Usage
+
+Explicitly naming the skill is the most reliable invocation method:
+
+```text
+Use $dsh-web to ask DSH to fix the failing tests, then inspect the changes and run the tests yourself.
+```
+
+Natural-language invocation also works:
+
+```text
+Use dsh web to implement this feature, then have Codex independently verify it.
+```
+
+The skill metadata permits implicit invocation, but Codex does not scan for or call DSH merely because port `8765` is running. Ordinary development requests that do not mention DSH do not use this plugin by default. To make DSH the preferred collaborator for one project, add a rule to that project's `AGENTS.md`:
+
+```markdown
+For code implementation, fixes, or testing, prefer `$dsh-web` to delegate the
+work to DSH Web, then independently inspect the changes and run validation.
+```
+
+## Direct client usage
+
+You can test the HTTP client without installing the plugin:
 
 ```bash
-CLIENT="skills/dsh-web/scripts/dsh_client.py"
+CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
+
 python3 "$CLIENT" health
-SID="$(python3 "$CLIENT" create --cwd "$PWD")"
-python3 "$CLIENT" run "$SID" "请检查当前项目并修复失败的测试"
+SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
+python3 "$CLIENT" run "$SESSION_ID" "Read README.md and summarize the project. Do not modify files."
+python3 "$CLIENT" history "$SESSION_ID" --messages
 ```
 
-Run `python3 skills/dsh-web/scripts/dsh_client.py --help` for all commands and environment overrides.
-
-## Validation
+Continue the same session:
 
 ```bash
+python3 "$CLIENT" run "$SESSION_ID" \
+  "Validation result: one test still fails with <error>. Please continue fixing it."
+```
+
+### Client commands
+
+| Command | Purpose |
+| --- | --- |
+| `health` | Check whether DSH Web is reachable |
+| `create` | Create a session rooted at a target directory |
+| `run` | Send a prompt and wait for the new turn |
+| `prompt` | Send a prompt without waiting |
+| `wait` | Wait for a subsequent `turn/end` |
+| `history` | Print raw history or a compact transcript |
+| `list` | List DSH sessions |
+| `cancel` | Cancel a session |
+| `open` | Open DSH Web on macOS |
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DSH_URL` | `http://127.0.0.1:8765` | DSH Web base URL |
+| `DSH_HTTP_TIMEOUT` | `30` | Timeout for each HTTP request in seconds |
+| `DSH_TIMEOUT` | `600` | Timeout while waiting for a turn in seconds |
+| `DSH_POLL_INTERVAL` | `2` | History polling interval in seconds |
+
+## Validate a development version
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m py_compile skills/dsh-web/scripts/dsh_client.py
 python3 /path/to/skill-creator/scripts/quick_validate.py skills/dsh-web
 python3 /path/to/plugin-creator/scripts/validate_plugin.py .
-python3 -m unittest discover -s tests -v
 ```
+
+An end-to-end test calls a real model and may incur API charges:
+
+```bash
+dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
+CLIENT="$PWD/skills/dsh-web/scripts/dsh_client.py"
+SESSION_ID="$(python3 "$CLIENT" create --cwd "$PWD")"
+python3 "$CLIENT" run "$SESSION_ID" "Read README.md and reply with only the project name. Do not modify files."
+```
+
+The test succeeds when the command returns a DSH answer and `http://127.0.0.1:8765` shows the same session and trace.
+
+## Update a local installation
+
+After installation, Codex loads the cached copy under `~/.codex/plugins/cache/` rather than continuously reading the source directory. After changing the plugin, update its cachebuster, reinstall it, and start a new Codex task:
+
+```bash
+python3 /path/to/plugin-creator/scripts/update_plugin_cachebuster.py \
+  "$HOME/plugins/codex-dsh-web"
+codex plugin add codex-dsh-web@personal
+```
+
+## Troubleshooting
+
+### `health` reports connection refused
+
+```bash
+dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
+tail -n 100 /tmp/dsh-web.log
+```
+
+### Codex cannot find `$dsh-web`
+
+Confirm that the plugin is installed, fully restart the desktop app, and start a new task. Existing tasks do not reload newly added skills.
+
+### Codex does not invoke DSH automatically
+
+Invoke `$dsh-web` explicitly or mention “use dsh web” in the request. Add a collaboration rule to the target repository's `AGENTS.md` when project-wide default behavior is desired.
+
+### Do multiple Codex tasks start multiple DSH processes?
+
+Normally, no. The skill checks the same `DSH_URL` first. Multiple tasks share one DSH Web process while creating separate sessions. Multiple service processes are used only when tasks are configured with different ports or `DSH_URL` values.
+
+## Security
+
+- Do not send API keys, passwords, or complete environment dumps to a DSH session.
+- When returning validation failures, include only the command, exit code, and relevant error excerpt.
+- Treat DSH responses as collaboration output, not verification. Codex should inspect the actual files and run relevant tests.
+- DSH write access is governed by its permission configuration and the surrounding Codex environment.
+
+See the [OpenAI plugin documentation](https://developers.openai.com/plugins/build/plugins) for additional local marketplace and plugin packaging guidance.

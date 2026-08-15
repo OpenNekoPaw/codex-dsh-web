@@ -1,17 +1,28 @@
 {
-  "name": "codex-dsh-skill",
+  "name": "codex-dsh-web",
   "version": "0.1.0",
   "description": "Drive and verify DSH Web sessions from Codex.",
   "author": {
-    "name": "Feng"
+    "name": "OpenNekoPaw",
+    "url": "https://github.com/OpenNekoPaw"
   },
+  "homepage": "https://github.com/OpenNekoPaw/codex-dsh-web#readme",
+  "repository": "https://github.com/OpenNekoPaw/codex-dsh-web",
+  "keywords": [
+    "codex",
+    "dsh",
+    "deepseek",
+    "plugin",
+    "skill"
+  ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Codex DSH Web",
+    "displayName": "DSH Web for Codex",
     "shortDescription": "Delegate tasks to local DSH Web sessions.",
     "longDescription": "Create and reuse DSH Web sessions, exchange prompts over its local HTTP API, inspect results, and feed Codex verification back into the same session.",
-    "developerName": "Feng",
+    "developerName": "OpenNekoPaw",
     "category": "Productivity",
+    "websiteURL": "https://github.com/OpenNekoPaw/codex-dsh-web",
     "capabilities": [
       "Local HTTP",
       "Interactive",
