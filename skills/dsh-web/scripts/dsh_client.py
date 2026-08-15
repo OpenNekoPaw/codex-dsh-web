@@ -61,6 +61,7 @@ class ServerStartResult:
     started: bool
     log_path: Optional[Path]
     pid: Optional[int]
+    runtime_path: Optional[Path]
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,40 @@ def server_log_path(base_url: str) -> Path:
     return Path(tempfile.gettempdir()) / f"dsh-web-{port}.log"
 
 
+def resolved_dsh_home() -> Path:
+    configured = os.environ.get("DSH_HOME")
+    if configured is None or not configured.strip():
+        return (Path.home() / ".dsh").resolve()
+    return Path(configured.strip()).expanduser().resolve()
+
+
+def server_runtime_path(base_url: str) -> Path:
+    _, port = local_web_target(base_url)
+    return resolved_dsh_home() / "runtime" / "codex-dsh-web" / str(port)
+
+
+def dsh_process_environment(runtime_path: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    configured = environment.get("DSH_HOME")
+    if configured is not None and configured.strip():
+        environment["DSH_HOME"] = str(resolved_dsh_home())
+    if os.name != "nt":
+        environment["PWD"] = str(runtime_path)
+        environment.pop("OLDPWD", None)
+    return environment
+
+
+def prepare_server_runtime(runtime_path: Path) -> None:
+    try:
+        runtime_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise DshClientError(
+            f"cannot create DSH Web runtime directory {runtime_path}: {error}"
+        ) from error
+    if not runtime_path.is_dir():
+        raise DshClientError(f"DSH Web runtime path is not a directory: {runtime_path}")
+
+
 def detached_process_options(log_file: Any) -> dict[str, Any]:
     options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
@@ -182,7 +217,13 @@ def detached_process_options(log_file: Any) -> dict[str, Any]:
     return options
 
 
-def launch_dsh(executable: str, host: str, port: int, log_path: Path) -> Any:
+def launch_dsh(
+    executable: str,
+    host: str,
+    port: int,
+    log_path: Path,
+    runtime_path: Path,
+) -> Any:
     command = executable_command(
         executable,
         "--profile",
@@ -192,9 +233,15 @@ def launch_dsh(executable: str, host: str, port: int, log_path: Path) -> Any:
         "--port",
         str(port),
     )
+    prepare_server_runtime(runtime_path)
     try:
         with log_path.open("ab") as log_file:
-            return subprocess.Popen(command, **detached_process_options(log_file))
+            return subprocess.Popen(
+                command,
+                cwd=str(runtime_path),
+                env=dsh_process_environment(runtime_path),
+                **detached_process_options(log_file),
+            )
     except OSError as error:
         raise DshClientError(f"failed to start DSH Web: {error}") from error
 
@@ -204,7 +251,9 @@ def start_dsh_server(
 ) -> ServerStartResult:
     try:
         client.health()
-        return ServerStartResult(started=False, log_path=None, pid=None)
+        return ServerStartResult(
+            started=False, log_path=None, pid=None, runtime_path=None
+        )
     except DshUnavailableError:
         pass
 
@@ -212,7 +261,8 @@ def start_dsh_server(
     executable = require_dsh_executable()
     dsh_version(executable)
     host, port = local_web_target(client.base_url)
-    process = launch_dsh(executable, host, port, log_path)
+    runtime_path = server_runtime_path(client.base_url)
+    process = launch_dsh(executable, host, port, log_path, runtime_path)
     deadline = time.monotonic() + startup_timeout
     last_error = "connection refused"
 
@@ -228,6 +278,7 @@ def start_dsh_server(
                 started=True,
                 log_path=log_path,
                 pid=getattr(process, "pid", None),
+                runtime_path=runtime_path,
             )
         except DshUnavailableError as error:
             last_error = str(error)
@@ -260,6 +311,13 @@ def doctor_report(client: "DshClient") -> dict[str, Any]:
         "npm": {"available": npm_path is not None, "path": npm_path},
         "server": {"url": client.base_url, "reachable": False},
     }
+
+    try:
+        report["server"]["managedRuntimePath"] = str(
+            server_runtime_path(client.base_url)
+        )
+    except DshClientError:
+        pass
 
     if dsh_path is not None:
         try:
@@ -775,7 +833,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("start", help="start a local DSH Web service if needed")
 
     create_parser = subparsers.add_parser("create", help="create a session")
-    create_parser.add_argument("--cwd", default=os.getcwd())
+    create_parser.add_argument("--cwd", required=True)
 
     rename_parser = subparsers.add_parser(
         "rename", help="set a stable title for browser selection"
@@ -855,7 +913,10 @@ def main() -> int:
         result = start_dsh_server(client, args.startup_timeout, args.poll_interval)
         if result.started:
             pid = f" (pid {result.pid})" if result.pid is not None else ""
-            print(f"Started DSH Web at {client.base_url}{pid}; log: {result.log_path}")
+            print(
+                f"Started DSH Web at {client.base_url}{pid}; "
+                f"runtime: {result.runtime_path}; log: {result.log_path}"
+            )
         else:
             print(f"DSH Web is already reachable at {client.base_url}")
     elif args.command == "create":

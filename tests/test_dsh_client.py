@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import socket
@@ -409,6 +410,7 @@ class DshClientTests(unittest.TestCase):
         self.assertFalse(result.started)
         self.assertIsNone(result.pid)
         self.assertIsNone(result.log_path)
+        self.assertIsNone(result.runtime_path)
         launch.assert_not_called()
 
     def test_start_launches_and_waits_for_health(self) -> None:
@@ -421,29 +423,76 @@ class DshClientTests(unittest.TestCase):
         ), mock.patch.object(
             dsh_client, "dsh_version", return_value="1.0"
         ), mock.patch.object(
+            dsh_client,
+            "server_runtime_path",
+            return_value=Path("/managed/dsh-runtime/8765"),
+        ), mock.patch.object(
             dsh_client, "launch_dsh", return_value=process
         ) as launch:
             result = dsh_client.start_dsh_server(client, 1, 0.01)
         self.assertTrue(result.started)
         self.assertEqual(result.pid, 1234)
-        launch.assert_called_once()
+        self.assertEqual(result.runtime_path, Path("/managed/dsh-runtime/8765"))
+        launch.assert_called_once_with(
+            "/bin/dsh",
+            "127.0.0.1",
+            8765,
+            dsh_client.server_log_path(client.base_url),
+            Path("/managed/dsh-runtime/8765"),
+        )
 
-    def test_launch_dsh_does_not_use_a_shell(self) -> None:
+    def test_launch_dsh_uses_managed_runtime_without_a_shell(self) -> None:
         process = mock.sentinel.process
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             dsh_client.subprocess, "Popen", return_value=process
         ) as popen:
+            runtime_path = Path(directory) / "runtime" / "8765"
             result = dsh_client.launch_dsh(
                 "/usr/local/bin/dsh",
                 "127.0.0.1",
                 8765,
                 Path(directory) / "dsh.log",
+                runtime_path,
             )
-        self.assertIs(result, process)
-        command = popen.call_args.args[0]
-        options = popen.call_args.kwargs
-        self.assertEqual(command[0], "/usr/local/bin/dsh")
-        self.assertNotIn("shell", options)
+            self.assertIs(result, process)
+            self.assertTrue(runtime_path.is_dir())
+            command = popen.call_args.args[0]
+            options = popen.call_args.kwargs
+            self.assertEqual(command[0], "/usr/local/bin/dsh")
+            self.assertEqual(options["cwd"], str(runtime_path))
+            self.assertIsInstance(options["env"], dict)
+            self.assertNotIn("shell", options)
+
+    def test_server_runtime_uses_resolved_dsh_home_and_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ, {"DSH_HOME": directory}
+        ):
+            runtime_path = dsh_client.server_runtime_path(
+                "http://127.0.0.1:9876"
+            )
+        self.assertEqual(
+            runtime_path,
+            Path(directory).resolve() / "runtime" / "codex-dsh-web" / "9876",
+        )
+
+    def test_relative_dsh_home_is_normalized_for_the_child(self) -> None:
+        with mock.patch.dict(os.environ, {"DSH_HOME": "relative-dsh-home"}):
+            expected = dsh_client.resolved_dsh_home()
+            runtime_path = expected / "runtime" / "codex-dsh-web" / "8765"
+            environment = dsh_client.dsh_process_environment(runtime_path)
+        self.assertTrue(expected.is_absolute())
+        self.assertEqual(environment["DSH_HOME"], str(expected))
+        if os.name != "nt":
+            self.assertEqual(environment["PWD"], str(runtime_path))
+            self.assertNotIn("OLDPWD", environment)
+
+    def test_create_requires_an_explicit_cwd(self) -> None:
+        parser = dsh_client.build_parser()
+        with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(
+            SystemExit
+        ) as error:
+            parser.parse_args(["create"])
+        self.assertEqual(error.exception.code, 2)
 
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")

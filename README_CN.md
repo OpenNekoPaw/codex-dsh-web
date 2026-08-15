@@ -25,6 +25,10 @@ Codex
 
 一个 DSH Web 进程可以同时承载多个独立 session。不同 Codex 任务默认创建不同的 `sessionId`，不会为每个会话启动一个新 DSH 服务进程。
 
+共享服务进程在 `$DSH_HOME/runtime/codex-dsh-web/<端口>` 下的专用目录中
+运行。每个 session 通过必填的 `session.create` `cwd` 接收真实仓库路径，
+因此服务 runtime、项目 workspace 和 DSH 持久化数据彼此分离。
+
 在 Codex Desktop 中，可以直接把 DSH 页面打开到内置 Browser/WebView 面板。HTTP API 仍是可靠的控制通道；内嵌页面负责展示对话与轨迹，并可在明确要求浏览器控制时供 Codex 检查或操作。
 
 ## 目录结构
@@ -72,6 +76,10 @@ dsh --version
 直接运行 Python 客户端，并通过 `create --cwd` 传入目标仓库的绝对路径。任务
 保存的旧目录被删除或改名时，进程可能在任何 shell 启动前就返回 `No such
 file or directory`；这不能说明 `zsh` 缺失。
+
+客户端不会在目标仓库或插件缓存中启动共享 DSH Web 进程。DSH 会把进程目录
+作为缺省 workspace，并在启动时读取该目录的 `.env`，因此托管 runtime
+必须与项目无关，并且不能因插件升级而消失。
 
 文档中的 macOS/Linux 示例使用 `python3`。Windows 请替换为 `py -3`；
 如果 `python` 指向 Python 3.9 或更高版本，也可以在任意平台使用。
@@ -192,8 +200,8 @@ py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" run <session-
 | --- | --- |
 | `doctor` | 检查 Python、DSH、npm 和服务状态，不执行安装 |
 | `health` | 检查 DSH Web 是否可访问 |
-| `start` | 复用或后台启动本机 loopback DSH Web，并输出日志路径 |
-| `create` | 为目标目录创建 session |
+| `start` | 复用或后台启动本机 loopback DSH Web，并输出 runtime 和日志路径 |
+| `create` | 使用必填的明确目标目录创建 session |
 | `rename` | 固定唯一标题，供内置浏览器精确选择 session |
 | `ui-target` | 输出 session 对应的基础 UI 地址和投影标题 |
 | `run` | 锁定 session、拒绝正在运行的 session、发送消息并等待与本次请求关联的 turn |
@@ -214,6 +222,7 @@ py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" run <session-
 | `DSH_TIMEOUT` | `600` | 等待一轮完成的超时秒数 |
 | `DSH_POLL_INTERVAL` | `2` | 历史轮询间隔秒数 |
 | `DSH_STARTUP_TIMEOUT` | `20` | 启动本机 DSH Web 的超时秒数 |
+| `DSH_HOME` | `~/.dsh` | DSH 数据根目录；托管 Web runtime 位于其 `runtime/codex-dsh-web/<端口>` 下 |
 
 ## 验证开发版本
 
@@ -261,6 +270,12 @@ python3 skills/dsh-web/scripts/dsh_client.py start
 ```
 
 启动失败时，`start` 会输出当前平台对应的日志路径。
+
+### 已有 DSH 服务从项目目录启动
+
+客户端会复用健康服务，无法原地修改该进程的工作目录。先确认没有 DSH
+session 正在运行，再停止已有服务并执行一次 `start`。新进程会使用托管
+runtime，后续 session 仍通过 `create --cwd` 接收各自的仓库路径。
 
 ### 缺少 Python 或 DSH
 

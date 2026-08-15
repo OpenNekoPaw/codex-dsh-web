@@ -25,6 +25,11 @@ Codex
 
 One DSH Web process can host multiple independent sessions. Separate Codex tasks normally create separate `sessionId` values while sharing the same service process.
 
+The shared service process runs from a dedicated directory under
+`$DSH_HOME/runtime/codex-dsh-web/<port>`. Each session receives its actual
+repository through the required `session.create` `cwd`, so the daemon runtime,
+project workspace, and persistent DSH data remain separate.
+
 In Codex Desktop, the DSH page can be opened directly in the built-in Browser/WebView panel. The HTTP API remains the reliable control channel; the embedded page provides the visible conversation and trace, and can also be inspected or operated when browser control is explicitly requested.
 
 ## Project structure
@@ -76,6 +81,11 @@ run the Python client with an explicit existing working directory and pass the
 target repository through `create --cwd`. A stale task directory can produce a
 process-spawn `No such file or directory` error before any shell starts; that is
 not evidence that `zsh` is missing.
+
+The client never starts the shared DSH Web process inside a target repository or
+plugin cache. DSH treats its process directory as a fallback workspace and reads
+that directory's `.env` during startup, so the managed runtime is intentionally
+project-neutral and stable across plugin upgrades.
 
 Examples use `python3` on macOS and Linux. On Windows, replace it with `py -3`;
 `python` is also valid on any platform when it resolves to Python 3.9 or later.
@@ -206,8 +216,8 @@ py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" run <sessio
 | --- | --- |
 | `doctor` | Report Python, DSH, npm, and server readiness without installing anything |
 | `health` | Check whether DSH Web is reachable |
-| `start` | Reuse or start a detached local loopback DSH Web service and report its log path |
-| `create` | Create a session rooted at a target directory |
+| `start` | Reuse or start a detached local loopback DSH Web service and report its runtime and log paths |
+| `create` | Create a session rooted at a required explicit target directory |
 | `rename` | Pin a stable, unique title for exact browser selection |
 | `ui-target` | Print the base UI URL and projected title for a session |
 | `run` | Lock the session, reject an already-running session, send a prompt, and wait for its correlated turn |
@@ -228,6 +238,7 @@ py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" run <sessio
 | `DSH_TIMEOUT` | `600` | Timeout while waiting for a turn in seconds |
 | `DSH_POLL_INTERVAL` | `2` | History polling interval in seconds |
 | `DSH_STARTUP_TIMEOUT` | `20` | Timeout while starting a local DSH Web service in seconds |
+| `DSH_HOME` | `~/.dsh` | DSH state root; the managed Web runtime is below `runtime/codex-dsh-web/<port>` |
 
 ## Validate a development version
 
@@ -278,6 +289,14 @@ python3 skills/dsh-web/scripts/dsh_client.py start
 ```
 
 `start` prints the platform-specific log path when startup fails.
+
+### An existing DSH service was started from a project directory
+
+The client intentionally reuses a healthy service and cannot change that
+process's working directory in place. Confirm that no DSH session is running,
+stop the existing service, and run `start` once. The replacement process uses
+the managed runtime directory and future sessions continue to receive their
+repository through `create --cwd`.
 
 ### Python or DSH is missing
 

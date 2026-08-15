@@ -33,6 +33,13 @@ argument vector and the platform subprocess API. Run it from an explicitly
 verified working directory; a stale `cwd` can make process creation fail before
 `/bin/sh`, `zsh`, PowerShell, or the requested executable starts.
 
+The managed DSH Web process runs from
+`$DSH_HOME/runtime/codex-dsh-web/<port>`, not from a project or plugin cache.
+DSH treats its process directory as the fallback workspace and loads a `.env`
+from that directory during boot. Every API-created session must therefore send
+its own absolute `cwd`; DSH uses that session cwd as the workspace-write sandbox
+boundary.
+
 ## Methods
 
 | Method | Payload | Important result |
@@ -95,4 +102,7 @@ selected state and conversation header.
 - RPC error: inspect the returned error object and session history.
 - Local startup failure: use the log path printed by `start` or `doctor`; it is
   stored in the operating system's temporary directory.
+- Existing service has a project cwd: stop that service only after confirming
+  that no session is running, then run `start` once so the managed runtime path
+  takes effect. A healthy existing service is intentionally reused.
 - Wait timeout: inspect `history --messages`, `list`, and the reported server log; do not blindly create another session.

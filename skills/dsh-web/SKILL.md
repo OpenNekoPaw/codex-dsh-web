@@ -44,8 +44,13 @@ above without changing the client command or its arguments.
 - Do not rely on the task's inherited working directory or `$PWD`. Resolve the
   target repository to an absolute path first and set the command tool's
   `workdir` explicitly for every invocation. Use the skill directory for
-  `doctor`, `start`, and `health`; use the verified repository path for
+  invoking `doctor`, `start`, and `health`; the client starts DSH Web itself in
+  `$DSH_HOME/runtime/codex-dsh-web/<port>`. Use the verified repository path for
   repository inspection and validation.
+- Do not start the shared DSH Web process in the target repository, the plugin
+  cache, or the skill directory. Those paths may contain project `.env` files
+  or disappear after an update. Keep the service runtime separate and pass the
+  project only through the required `create --cwd` argument.
 - On POSIX systems, when the command tool supports shell selection, prefer a
   non-login `/bin/sh` invocation. On Windows, use PowerShell or `cmd.exe` as
   provided by the command tool. Pass client arguments separately instead of
@@ -89,9 +94,9 @@ above without changing the client command or its arguments.
    ```
 
    `start` reuses an already healthy service, starts only an `http` loopback
-   `DSH_URL`, waits for readiness, and reports the platform temporary-directory
-   log path. Do not start a second process after an HTTP, trust-fence, or timeout
-   error; diagnose that error instead.
+   `DSH_URL`, waits for readiness, and reports both its managed runtime directory
+   and platform temporary-directory log path. Do not start a second process
+   after an HTTP, trust-fence, or timeout error; diagnose that error instead.
 
    Treat invoking the plugin without an implementation task as a request to open
    the DSH UI and confirm health. In Codex Desktop, use the in-app Browser control
@@ -112,7 +117,9 @@ above without changing the client command or its arguments.
    <python> <client> create --cwd <verified-absolute-repository-path>
    ```
 
-   Capture the printed session ID and reuse it for the complete task.
+   `--cwd` is required. Capture the printed session ID and reuse it for the
+   complete task. Never substitute the service runtime directory for the target
+   repository.
 
    Immediately give the session a stable, unique UI title. Use a concise task
    description plus a short suffix from the session ID, for example:
