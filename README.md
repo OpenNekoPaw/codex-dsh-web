@@ -25,6 +25,8 @@ Codex
 
 One DSH Web process can host multiple independent sessions. Separate Codex tasks normally create separate `sessionId` values while sharing the same service process.
 
+In Codex Desktop, the DSH page can be opened directly in the built-in Browser/WebView panel. The HTTP API remains the reliable control channel; the embedded page provides the visible conversation and trace, and can also be inspected or operated when browser control is explicitly requested.
+
 ## Project structure
 
 ```text
@@ -46,7 +48,7 @@ The plugin ID is `codex-dsh-web`, its display name is **DSH Web for Codex**, and
 - `dsh` is installed and `dsh --profile web --help` works.
 - A DeepSeek API key is configured in the DSH Web Models page or inherited environment.
 - Codex can access the loopback network and write to the target repository and `DSH_HOME` (normally `~/.dsh`).
-- Python 3.10 or later. The client uses only the Python standard library.
+- Python 3.9 or later. The client uses only the Python standard library.
 
 Start DSH Web:
 
@@ -94,6 +96,27 @@ For code implementation, fixes, or testing, prefer `$dsh-web` to delegate the
 work to DSH Web, then independently inspect the changes and run validation.
 ```
 
+To keep the live DSH interface beside the Codex task, ask Codex to open it:
+
+```text
+Use $dsh-web for this task and open the DSH Web UI in the built-in browser.
+```
+
+Codex Desktop should open `DSH_URL` in its Browser/WebView panel. When that
+surface is unavailable, the client's `open` command falls back to the macOS
+default browser. Opening the page alone does not replace API-based result
+collection; UI inspection or interaction must be explicitly requested.
+
+### DSH session configuration
+
+The plugin does not require a fixed agent preset, permission policy, or model:
+
+- `minimal` is a practical low-overhead preset, but it is not required by the protocol.
+- Use read-only permission for analysis and workspace-write for implementation. Reserve danger-full-access for tasks that explicitly need access outside the workspace.
+- Select the DSH model according to task quality, latency, and cost needs. The client reuses the session's configured model and does not hard-code one.
+
+The current HTTP API client creates sessions with a working directory only. Change the preset, permission, or model in DSH Web before prompting when its defaults are unsuitable.
+
 ## Direct client usage
 
 You can test the HTTP client without installing the plugin:
@@ -120,13 +143,13 @@ python3 "$CLIENT" run "$SESSION_ID" \
 | --- | --- |
 | `health` | Check whether DSH Web is reachable |
 | `create` | Create a session rooted at a target directory |
-| `run` | Send a prompt and wait for the new turn |
+| `run` | Lock the session, reject an already-running session, send a prompt, and wait for its correlated turn |
 | `prompt` | Send a prompt without waiting |
-| `wait` | Wait for a subsequent `turn/end` |
+| `wait` | Snapshot current history and wait for a subsequent `turn/end`; optional cursor flags resume from an earlier point |
 | `history` | Print raw history or a compact transcript |
 | `list` | List DSH sessions |
 | `cancel` | Cancel a session |
-| `open` | Open DSH Web on macOS |
+| `open` | Open DSH Web in the macOS default browser as a fallback |
 
 ### Environment variables
 
@@ -156,6 +179,15 @@ python3 "$CLIENT" run "$SESSION_ID" "Read README.md and reply with only the proj
 ```
 
 The test succeeds when the command returns a DSH answer and `http://127.0.0.1:8765` shows the same session and trace.
+
+### Session concurrency
+
+`run` uses a cross-process local lock per `DSH_URL` and `sessionId`, checks
+`session.list` for an already-running session, and correlates the prompt RPC ID
+with the resulting DSH turn. Use one session sequentially and create separate
+sessions for parallel work. Manual prompts entered in the DSH UI or sent by
+another client are outside the local lock and can still race, so they should use
+a different session while Codex is running a task.
 
 ## Update the installation
 

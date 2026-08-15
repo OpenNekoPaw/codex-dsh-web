@@ -1,6 +1,6 @@
 ---
 name: dsh-web
-description: Drive a local DSH Web server from Codex through its HTTP API, including starting or checking the server, creating and reusing sessions, sending prompts, waiting for completed turns, reviewing history, verifying code changes, and returning validation feedback to the same session. Use when the user asks Codex to call, delegate to, collaborate with, converse with, or execute work through dsh web or DeepSeek Harness web, especially for iterative implementation and test-fix loops with browser-visible traces.
+description: Drive a local DSH Web server from Codex through its HTTP API, including starting or checking the server, opening its UI in the Codex Desktop browser, creating and reusing sessions, sending prompts, waiting for completed turns, reviewing history, verifying code changes, and returning validation feedback to the same session. Use when the user asks Codex to open, call, delegate to, collaborate with, converse with, or execute work through dsh web or DeepSeek Harness web, especially for iterative implementation and test-fix loops with browser-visible traces.
 ---
 
 # DSH Web
@@ -33,6 +33,13 @@ Do not assume the caller's repository contains a copy of this script. Use the ab
 
    Re-run `health`; if startup fails, inspect `/tmp/dsh-web.log`. Tell the user the browser UI is at `http://127.0.0.1:8765` rather than opening it unless asked.
 
+   When the user explicitly asks to open or show the DSH UI, prefer the Codex
+   Desktop in-app Browser/WebView and navigate it to `DSH_URL`. If that surface
+   is unavailable, use `python3 "$DSH_CLIENT" open` as the macOS external-browser
+   fallback. Opening the page is for visualization; continue to use the HTTP API
+   for deterministic prompting and history reads. Use browser control only when
+   the user asks Codex to inspect or interact with the visible UI.
+
 2. Create one session rooted at the target repository:
 
    ```bash
@@ -46,6 +53,10 @@ Do not assume the caller's repository contains a copy of this script. Use the ab
    ```
 
    Prefer `run` over separate `prompt` and `wait` calls. It snapshots existing history before prompting, so an immediately completed turn cannot be mistaken for an older one. Preserve `SESSION_ID` for the whole loop.
+
+   `run` serializes local callers for the same session, rejects a session that
+   DSH reports as running, and correlates the prompt RPC ID with its turn. Use one
+   session sequentially; create a separate session for parallel work.
 
 4. Inspect the workspace changes and independently run the narrowest relevant tests, lint, or build. Do not accept an `assistant/message` as proof that work succeeded.
 
@@ -62,7 +73,9 @@ Do not assume the caller's repository contains a copy of this script. Use the ab
 Use these only when the combined loop is unsuitable:
 
 - `prompt <session-id> <text>` queues a prompt without waiting.
-- `wait <session-id> --after-seq <seq>` waits for a later `turn/end`.
+- `wait <session-id>` snapshots current history and waits only for a later
+  `turn/end`. Use `--after-seq` and/or `--after-count` to resume from an explicit
+  cursor.
 - `history <session-id>` prints raw history; add `--messages` for a compact transcript.
 - `list` prints known sessions and state.
 - `cancel <session-id>` requests cancellation.
@@ -72,9 +85,23 @@ Set `DSH_URL` to override `http://127.0.0.1:8765`, `DSH_HTTP_TIMEOUT` for each H
 
 Read [references/api.md](references/api.md) when debugging envelopes, response shapes, event parsing, trust-fence failures, or version compatibility.
 
+## Respect session configuration
+
+- Do not require a particular DSH agent preset or model. Reuse the session's
+  configured preset and model unless the user asks to change them. The `minimal`
+  preset is a sensible low-overhead default, not a protocol requirement.
+- Match DSH permissions to the task: use read-only for analysis, workspace-write
+  for implementation, and danger-full-access only when the user explicitly needs
+  operations outside the workspace boundary.
+- The current HTTP client does not set the preset, model, or permission policy.
+  Configure those in DSH Web before prompting when the defaults are unsuitable.
+
 ## Apply safeguards
 
 - Reuse the same session only for one coherent task and repository.
+- Do not send another `run` to a session while it is working. The local lock
+  protects bundled-client callers, but manual UI prompts or other clients can
+  still race with it.
 - Never include secrets, tokens, or unnecessary environment data in prompts or validation logs.
 - Avoid sending unbounded command output; include the command, exit code, and relevant tail or error excerpt.
 - Treat DSH HTTP errors, RPC errors, error turn endings, and timeouts as failures. Inspect history or the server log before retrying.

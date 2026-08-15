@@ -25,7 +25,8 @@ The expected response repeats the request ID:
 }
 ```
 
-Treat a mismatched `rpcId`, a non-object `result`, or `result.ok` set to false as a protocol error.
+Treat a response type other than `server-response`, a mismatched `rpcId`, a
+non-object `result`, or `result.ok` set to false as a protocol error.
 
 ## Methods
 
@@ -34,7 +35,7 @@ Treat a mismatched `rpcId`, a non-object `result`, or `result.ok` set to false a
 | `session.create` | `{"cwd":"/absolute/path"}` | `value.sessionId` |
 | `session.prompt` | `{"sessionId":"...","mode":"queue","content":[{"type":"text","text":"..."}]}` | acknowledgement |
 | `session.history` | `{"sessionId":"..."}` | `value.events[]` |
-| `session.list` | `{}` | implementation-defined session collection |
+| `session.list` | `{}` | session collection; current servers expose `items[].running` |
 | `session.cancel` | `{"sessionId":"..."}` | acknowledgement |
 
 ## History events
@@ -43,11 +44,22 @@ History entries normally wrap the event as `{"event": {...}}`; tolerate an unwra
 
 - `seq`: monotonically increasing sequence number when provided.
 - `type: "turn/start"`: a turn began.
+- `type: "user/message"`: the prompt source currently repeats its request RPC ID
+  at `data.source.rpcId`; `run` uses it with `data.turn` to identify the prompted
+  turn.
 - `type: "assistant/message"`: final assistant message; text blocks live at `data.message.content[]`.
 - `type: "assistant/chunk"`: streamed content for the UI; ignore when extracting a final answer.
 - `type: "turn/end"`: terminal event; `data.reason.kind` is normally `completed` or `error`.
 
-When sequence numbers are unavailable, the client uses the history array length captured before prompting as its cursor. When both are available, it filters by sequence number to avoid replaying old messages.
+When sequence numbers are unavailable, the client uses the history array length
+captured before prompting as its cursor. In mixed histories it keeps both events
+with a newer sequence and unsequenced events appended after the captured length.
+
+`run` checks `session.list` before prompting, takes a cross-process lock scoped to
+the DSH URL and session ID, and waits for the turn associated with the prompt RPC
+ID. This protects bundled-client callers. Prompts sent manually in the DSH UI or
+through another client remain external concurrency and should use a separate
+session.
 
 ## Common failures
 

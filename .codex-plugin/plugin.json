@@ -1,6 +1,6 @@
 {
   "name": "codex-dsh-web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drive and verify DSH Web sessions from Codex.",
   "author": {
     "name": "OpenNekoPaw",
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "DSH Web for Codex",
     "shortDescription": "Delegate tasks to local DSH Web sessions.",
-    "longDescription": "Create and reuse DSH Web sessions, exchange prompts over its local HTTP API, inspect results, and feed Codex verification back into the same session.",
+    "longDescription": "Create and reuse DSH Web sessions, open the live UI in Codex Desktop, exchange prompts over its local HTTP API, inspect results, and feed Codex verification back into the same session.",
     "developerName": "OpenNekoPaw",
     "category": "Productivity",
     "websiteURL": "https://github.com/OpenNekoPaw/codex-dsh-web",
