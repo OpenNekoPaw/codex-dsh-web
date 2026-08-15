@@ -29,6 +29,7 @@ One DSH Web process can host multiple independent sessions. Separate Codex tasks
 
 ```text
 codex-dsh-web/
+├── .agents/plugins/marketplace.json
 ├── .codex-plugin/plugin.json
 ├── skills/dsh-web/
 │   ├── SKILL.md
@@ -54,40 +55,20 @@ dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
 open http://127.0.0.1:8765
 ```
 
-## Personal installation
+## Installation
 
-The default personal marketplace is `~/.agents/plugins/marketplace.json`, and personal plugin sources are commonly stored under `~/plugins/`:
-
-```bash
-git clone https://github.com/OpenNekoPaw/codex-dsh-web.git \
-  "$HOME/plugins/codex-dsh-web"
-mkdir -p "$HOME/.agents/plugins"
-```
-
-Create or merge the following marketplace configuration:
-
-```json
-{
-  "name": "personal",
-  "interface": {"displayName": "Personal"},
-  "plugins": [
-    {
-      "name": "codex-dsh-web",
-      "source": {"source": "local", "path": "./plugins/codex-dsh-web"},
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
-```
-
-Codex discovers the default personal marketplace automatically, so do not run `codex plugin marketplace add` for this path. Restart the ChatGPT/Codex desktop app and install the plugin from **Plugins → Personal**, or use the CLI:
+Register this GitHub repository as a Codex plugin marketplace, then install the plugin:
 
 ```bash
-codex plugin add codex-dsh-web@personal
+codex plugin marketplace add OpenNekoPaw/codex-dsh-web --ref main
+codex plugin add codex-dsh-web@codex-dsh-web
+```
+
+To confirm the installation:
+
+```bash
+codex plugin marketplace list
+codex plugin list
 ```
 
 Start a new Codex task after installation. Existing tasks do not automatically load newly installed skills.
@@ -176,14 +157,13 @@ python3 "$CLIENT" run "$SESSION_ID" "Read README.md and reply with only the proj
 
 The test succeeds when the command returns a DSH answer and `http://127.0.0.1:8765` shows the same session and trace.
 
-## Update a local installation
+## Update the installation
 
-After installation, Codex loads the cached copy under `~/.codex/plugins/cache/` rather than continuously reading the source directory. After changing the plugin, update its cachebuster, reinstall it, and start a new Codex task:
+Refresh the GitHub marketplace snapshot, reinstall the plugin, and start a new Codex task:
 
 ```bash
-python3 /path/to/plugin-creator/scripts/update_plugin_cachebuster.py \
-  "$HOME/plugins/codex-dsh-web"
-codex plugin add codex-dsh-web@personal
+codex plugin marketplace upgrade codex-dsh-web
+codex plugin add codex-dsh-web@codex-dsh-web
 ```
 
 ## Troubleshooting

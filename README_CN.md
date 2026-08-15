@@ -29,6 +29,7 @@ Codex
 
 ```text
 codex-dsh-web/
+├── .agents/plugins/marketplace.json
 ├── .codex-plugin/plugin.json
 ├── skills/dsh-web/
 │   ├── SKILL.md
@@ -54,40 +55,20 @@ dsh --profile web --port 8765 > /tmp/dsh-web.log 2>&1 &
 open http://127.0.0.1:8765
 ```
 
-## 个人安装
+## 安装
 
-个人 marketplace 默认位于 `~/.agents/plugins/marketplace.json`，插件源码通常放在 `~/plugins/`：
-
-```bash
-git clone https://github.com/OpenNekoPaw/codex-dsh-web.git \
-  "$HOME/plugins/codex-dsh-web"
-mkdir -p "$HOME/.agents/plugins"
-```
-
-创建或合并以下 marketplace 配置：
-
-```json
-{
-  "name": "personal",
-  "interface": {"displayName": "Personal"},
-  "plugins": [
-    {
-      "name": "codex-dsh-web",
-      "source": {"source": "local", "path": "./plugins/codex-dsh-web"},
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
-```
-
-默认个人 marketplace 会被 Codex 自动发现，不需要运行 `codex plugin marketplace add`。重启 ChatGPT/Codex 桌面应用，在 **Plugins → Personal** 安装插件，或使用 CLI：
+将本 GitHub 仓库注册为 Codex 插件 marketplace，然后安装插件：
 
 ```bash
-codex plugin add codex-dsh-web@personal
+codex plugin marketplace add OpenNekoPaw/codex-dsh-web --ref main
+codex plugin add codex-dsh-web@codex-dsh-web
+```
+
+确认安装结果：
+
+```bash
+codex plugin marketplace list
+codex plugin list
 ```
 
 安装后创建一个新的 Codex 任务，已打开的旧任务不会自动加载新 skill。
@@ -176,14 +157,13 @@ python3 "$CLIENT" run "$SESSION_ID" "读取 README.md，只回复项目名称，
 
 成功标准：命令返回 DSH 回答，并且浏览器中的 `http://127.0.0.1:8765` 出现相同 session 的对话与轨迹。
 
-## 更新本地安装
+## 更新安装
 
-Codex 使用 `~/.codex/plugins/cache/` 中的已安装副本，不会直接读取持续变化的源码目录。修改插件后需要更新 cachebuster、重新安装，并新建 Codex 任务：
+刷新 GitHub marketplace 快照、重新安装插件，然后新建 Codex 任务：
 
 ```bash
-python3 /path/to/plugin-creator/scripts/update_plugin_cachebuster.py \
-  "$HOME/plugins/codex-dsh-web"
-codex plugin add codex-dsh-web@personal
+codex plugin marketplace upgrade codex-dsh-web
+codex plugin add codex-dsh-web@codex-dsh-web
 ```
 
 ## 常见问题

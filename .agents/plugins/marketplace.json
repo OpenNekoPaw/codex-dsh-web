@@ -1,0 +1,21 @@
+{
+  "name": "codex-dsh-web",
+  "interface": {
+    "displayName": "DSH Web for Codex"
+  },
+  "plugins": [
+    {
+      "name": "codex-dsh-web",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/OpenNekoPaw/codex-dsh-web.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
