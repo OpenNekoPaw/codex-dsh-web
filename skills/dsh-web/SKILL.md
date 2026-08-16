@@ -1,290 +1,120 @@
 ---
 name: dsh-web
-description: Drive a local DSH Web server from Codex through its HTTP API, including starting or checking the server, opening its UI in the Codex Desktop browser, creating and reusing sessions with automatically enforced task-appropriate permissions, sending prompts, waiting for completed turns, reviewing history, verifying code changes, and returning validation feedback to the same session. Use when the user asks Codex to open, call, delegate to, collaborate with, converse with, or execute work through dsh web or DeepSeek Harness web, especially for iterative implementation and test-fix loops with browser-visible traces.
+description: Delegate a development task to a local DSH Web session, optionally show the exact active session in Codex Desktop, then let Codex inspect and verify the result. Use when the user asks to use, open, call, or collaborate with DSH Web or DeepSeek Harness Web.
 ---
 
 # DSH Web
 
-Use the bundled client to keep JSON envelopes, error handling, and turn polling deterministic. Keep Codex responsible for inspecting the resulting files and running relevant validation; DSH Web is a collaborator, not the source of truth.
+Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Codex remains responsible for inspecting files and running validation.
 
 ## Locate the client
 
-Use the absolute client path from this skill directory. Do not assume the
-caller's repository contains a copy of the script.
+Resolve `scripts/dsh_client.py` relative to this skill directory and invoke it by absolute path.
 
-Before invoking it, choose a Python 3.9-or-later launcher:
+Use Python 3.9 or later:
 
-- On macOS or Linux, try `python3`, then `python`.
-- On Windows, try `py -3`, then `python`, then `python3`.
-- Run the candidate with `--version` and reject Python older than 3.9.
-- If no supported interpreter exists, tell the user that Python 3.9+ is a
-  required external dependency and ask before running any platform package
-  manager or installer. Do not install Python silently.
+- macOS/Linux: prefer `python3`, then `python`.
+- Windows: prefer `py -3`, then `python`.
+- If Python is missing or too old, explain the requirement and ask before installing anything.
 
-In the examples below, replace `<python>` with the selected launcher and
-`<client>` with `<skill-directory>/scripts/dsh_client.py`. Keep `py -3` as two
-arguments rather than one quoted executable name.
+The client is cross-platform and does not depend on `zsh`, `bash`, or shell scripts. Run it from an existing directory and pass the target repository as an absolute `--cwd`.
 
-The client subcommands are platform-neutral. Only the Python launcher and path
-syntax vary:
+## Run a task
 
-| Platform | Invocation shape |
-| --- | --- |
-| macOS / Linux | `python3 <absolute-client-path> <command> [arguments]` |
-| Windows | `py -3 <absolute-client-path> <command> [arguments]` |
+Choose the intent without asking the user to configure DSH permissions:
 
-If the preferred launcher is unavailable, use the verified fallback selected
-above without changing the client command or its arguments.
+- `read`: inspection, explanation, review, diagnosis, or planning.
+- `write`: implementation, fixes, refactors, formatting, or tests that may write files.
+- `full-access`: only when the user explicitly requests work requiring writes outside the repository and normal temporary paths.
 
-## Use a shell-independent command path
+For a new session:
 
-- Do not require `zsh`, `bash`, or the user's login shell. The bundled client is
-  Python and launches `dsh` directly with an argument vector, without
-  `shell=True`.
-- Do not rely on the task's inherited working directory or `$PWD`. Resolve the
-  target repository to an absolute path first and set the command tool's
-  `workdir` explicitly for every invocation. Use the skill directory for
-  invoking `doctor`, `start`, and `health`; the client starts DSH Web itself in
-  `$DSH_HOME/runtime/codex-dsh-web/<port>`. Use the verified repository path for
-  repository inspection and validation.
-- Do not start the shared DSH Web process in the target repository, the plugin
-  cache, or the skill directory. Those paths may contain project `.env` files
-  or disappear after an update. Keep the service runtime separate and pass the
-  project only through the required `create --cwd` argument.
-- On POSIX systems, when the command tool supports shell selection, prefer a
-  non-login `/bin/sh` invocation. On Windows, use PowerShell or `cmd.exe` as
-  provided by the command tool. Pass client arguments separately instead of
-  using shell variables, command substitution, or shell startup files.
-- Treat a shell exposed by the command tool only as its process transport. Do
-  not generate platform-specific shell scripts for the collaboration loop, and
-  do not transpose POSIX syntax such as `$PWD` or `$(...)` onto Windows.
-- If process creation reports `No such file or directory`, check the explicit
-  `workdir` and requested executable separately. A deleted or renamed workspace
-  directory causes the same error before any shell starts.
-- If the inherited task directory is stale, retry once from the existing skill
-  directory with an explicit `workdir`, then pass the real repository path to
-  `create --cwd`. Report the stale workspace path; do not probe alternate login
-  shells.
+```text
+<python> <client> task \
+  --cwd <absolute-repository-path> \
+  --intent <read|write|full-access> \
+  --prompt "<specific task and constraints>"
+```
 
-## Run the collaboration loop
+The client automatically:
 
-1. Check the local server:
+1. Reuses a healthy DSH Web service or starts one after connection refusal.
+2. Creates the session in the requested repository.
+3. Maps intent to and verifies the effective DSH permission.
+4. Assigns a unique visible title.
+5. Sends the prompt and waits for the correlated answer.
 
-   ```text
-   <python> <client> health
-   ```
+The result is one JSON object. Keep its `sessionId` for follow-up work.
 
-   If the command reports connection refused, run the dependency report:
+To continue the same session:
 
-   ```text
-   <python> <client> doctor
-   ```
+```text
+<python> <client> task \
+  --session <session-id> \
+  --intent <read|write|full-access> \
+  --prompt "<follow-up task or validation feedback>"
+```
 
-   When `doctor` reports that `dsh` is missing, explain that DeepSeek Harness is
-   an external dependency. Show its reported install command
-   (`npm install --global @deepseek-ai/dsh`). If npm is also missing, explain
-   that Node.js and npm must be installed first. Ask the user before running
-   either installer; do not infer authorization from invoking this skill.
+Use one session sequentially. Create separate sessions for genuinely parallel work.
 
-   If the dependencies are available and running a local service is within the
-   user's request, start it through the cross-platform client:
+## Show the active session
 
-   ```text
-   <python> <client> start
-   ```
+When the user asks to see DSH Web in Codex Desktop, add `--ui`:
 
-   `start` reuses an already healthy service, starts only an `http` loopback
-   `DSH_URL`, waits for readiness, and reports both its managed runtime directory
-   and platform temporary-directory log path. Do not start a second process
-   after an HTTP, trust-fence, or timeout error; diagnose that error instead.
+```text
+<python> <client> task \
+  --cwd <absolute-repository-path> \
+  --intent write \
+  --prompt "<task>" \
+  --ui
+```
 
-   Treat invoking the plugin without an implementation task as a request to open
-   the DSH UI and confirm health. In Codex Desktop, use the in-app Browser control
-   surface to open `DSH_URL` and place it beside the task.
-   Do not satisfy this request by only printing the URL, returning a Markdown
-   link, or rendering a website preview card. The UI is considered opened only
-   when Codex has requested an actual Browser/WebView panel.
+A dispatched result contains:
 
-   If the Codex app browser-panel action is unavailable, use `<python> <client>
-   open` as the platform default-browser fallback and state that the fallback
-   was used. Opening the page is for visualization; continue to use the HTTP API
-   for deterministic prompting and history reads. Use browser control only when
-   the user asks Codex to inspect or interact with the visible UI.
+- `ui.url`: the DSH Web address.
+- `ui.title`: the exact session title.
+- `receipt`: an opaque value used by `wait`.
 
-2. Choose and enforce the session permission automatically. Do not ask the user
-   to configure DSH permissions in the UI:
+Use the Codex in-app Browser control to open `ui.url`. DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match.
 
-   - Use `read-only` for inspection, explanation, review, diagnosis, and planning
-     that must not change files.
-   - Use `workspace-write` for implementation, fixes, refactors, formatting,
-     tests that may write artifacts, and other repository-changing work.
-   - Use `danger-full-access` only when the user explicitly requests an operation
-     that requires writes outside the repository and permitted temporary paths.
+Use Computer Use only when normal Browser control is unavailable or cannot operate the page after a retry.
 
-   Create one session rooted at the target repository and pass the selected
-   preset in the same command:
+After selecting the session, wait for the result:
 
-   ```text
-   <python> <client> create --cwd <verified-absolute-repository-path> --permission <read-only-or-workspace-write>
-   ```
+```text
+<python> <client> wait <receipt>
+```
 
-   `--cwd` is required. `create` executes DSH's command RPC when the new
-   session's effective preset differs, then verifies
-   `projections.values.permissions.currentValue` before printing the session ID.
-   Treat a command or verification failure as a compatibility error and stop;
-   do not replace enforced permissions with a prompt such as "do not modify
-   files", and do not send the user to DSH Web to configure the session.
+Do not decode or edit the receipt.
 
-   Capture the printed session ID and reuse it for the complete task. Never
-   substitute the service runtime directory for the target repository.
+If the user only asks to open DSH Web without delegating a task, run `doctor`. If the server is not reachable but DSH is installed, run `debug start`, then open the reported URL in the in-app Browser.
 
-   Before reusing an existing session, inspect or enforce the task-appropriate
-   preset without user interaction:
+## Verify independently
 
-   ```text
-   <python> <client> permission <session-id> [read-only|workspace-write|danger-full-access]
-   ```
+After DSH completes:
 
-   Trust the verified DSH permission projection. When it reports `read-only`, do
-   not add a second Codex-side restriction or reject the collaboration merely
-   because the model can describe a possible edit. If task intent changes from
-   analysis to implementation, switch the same idle session to
-   `workspace-write` before sending the implementation prompt.
+1. Inspect the relevant files and diff.
+2. Run tests, lint, build, or focused checks appropriate to the task.
+3. Do not attribute unrelated repository changes to the current DSH session.
+4. If validation fails because of DSH's work, send the concise failure back with another `task --session ...` call.
+5. Stop only when the requested outcome is verified or a real blocker is reported.
 
-   Immediately give the session a stable, unique UI title. Use a concise task
-   description plus a short suffix from the session ID, for example:
+A DSH answer is evidence, not verification. Prefer file contents, version-control state, and command results.
 
-   ```text
-   <python> <client> rename <session-id> "Codex: fix login tests [a65d-ed81]"
-   ```
+## Dependencies and failures
 
-   Keep the accepted title printed by `rename`. The explicit rename pins the
-   title so DSH's automatic title generation cannot make browser selection
-   ambiguous.
+Run:
 
-3. When no live UI synchronization is requested, send the task and wait
-   atomically for the new turn:
+```text
+<python> <client> doctor
+```
 
-   ```text
-   <python> <client> run <session-id> "<specific task and constraints>"
-   ```
+The report distinguishes Python, npm, DSH, and server readiness. DSH is an external dependency installed with:
 
-   Prefer `run` over separate `prompt` and `wait` calls. It snapshots existing history before prompting, so an immediately completed turn cannot be mistaken for an older one. Preserve `SESSION_ID` for the whole loop.
+```text
+npm install --global @deepseek-ai/dsh
+```
 
-   `run` serializes local callers for the same session, rejects a session that
-   DSH reports as running, and correlates the prompt RPC ID with its turn. Use one
-   session sequentially; create a separate session for parallel work.
+Never install Python, Node.js, npm, or DSH without user approval.
 
-   When the user wants the built-in DSH UI to show the active session while it is
-   working, split the same correlated operation into dispatch, selection, and
-   wait:
-
-   ```text
-   <python> <client> dispatch <session-id> "<specific task and constraints>"
-   <python> <client> ui-target <session-id>
-   ```
-
-   Capture `rpcId`, `afterCount`, and optional `afterSeq` from `dispatch`, plus
-   `url` and `title` from `ui-target`. Then use
-   `browser:control-in-app-browser` to claim or open the Codex in-app Browser tab
-   and synchronize it with the exact session:
-
-   - Reuse or open a tab at the returned `url`. Loading `/` is not session
-     synchronization because DSH restores the tab's previous client-side
-     selection.
-   - Inspect the current page. If the session-search textbox or session tree is
-     absent, click `Open sidebar` / `打开侧边栏` or `Search sessions` /
-     `搜索会话` before continuing. A collapsed sidebar is a recoverable UI state,
-     not a reason to stop.
-   - Fill `Search sessions...` / `搜索会话...` with the exact title returned by
-     `ui-target`. Wait for the matching session `treeitem`, then click it.
-   - Verify both that the matching `treeitem` has `aria-selected="true"` and
-     that the conversation header or breadcrumb contains the exact title.
-   - Treat any old conversation, the New Session entry page, workspace chooser,
-     or root composer as synchronization failure until both checks pass. Do not
-     stop after merely opening the WebView or report that the active session is
-     visible before verification succeeds.
-
-   DSH Web 0.1.0-rc.6 keeps session selection in client-side state and leaves the
-   URL at `/`; do not invent or navigate to a `/session/<id>` route. If the title
-   is not visible immediately, keep the browser tab open and wait briefly for the
-   session list update instead of opening another DSH server.
-
-   Use Browser control as the primary UI surface. If it is unavailable or still
-   cannot interact with DSH after fresh page inspection and normal recovery, use
-   `computer-use` against the Codex app as a fallback to expand the sidebar,
-   search the exact title, click the matching session, and visually verify the
-   selected title. Do not use Computer Use merely because the sidebar starts
-   collapsed.
-
-   After the correct session is selected and verified, wait for the dispatched turn without
-   losing an immediately completed result:
-
-   ```text
-   <python> <client> wait <session-id> --after-count <afterCount> [--after-seq <afterSeq>] --rpc-id <rpcId>
-   ```
-
-   Omit `--after-seq` when `dispatch` prints `null`. If neither Browser control
-   nor Computer Use can operate the in-app UI, use the default-browser fallback,
-   report the exact session title for manual selection, and state that automatic
-   session switching was not available.
-
-4. Inspect the workspace changes and independently run the narrowest relevant tests, lint, or build. Do not accept an `assistant/message` as proof that work succeeded.
-
-5. If validation fails or more work is needed, send a concise result back to the same session:
-
-   ```text
-   <python> <client> run <session-id> "验证结果：<command and relevant failure>. 请继续修复。"
-   ```
-
-6. Repeat inspection and validation until the requested result is complete. Report the DSH contribution and Codex's actual verification separately.
-
-## Use lower-level commands
-
-Use these only when the combined loop is unsuitable:
-
-- `doctor` reports Python, DSH, npm, and server readiness without installing anything.
-- `start` starts one local loopback DSH Web service when `health` reports connection refused.
-- `permission <session-id> [preset]` prints the enforced DSH permission or
-  switches and verifies it through `/api/commands/execute`.
-- `prompt <session-id> <text>` queues a prompt without waiting.
-- `rename <session-id> <title>` pins a stable title for exact UI selection.
-- `ui-target <session-id>` prints the base URL and title used to find the session
-  in the DSH sidebar; DSH does not expose a per-session URL.
-- `dispatch <session-id> <text>` queues a prompt and prints a correlation receipt
-  so Codex can select the UI session before waiting.
-- `wait <session-id>` snapshots current history and waits only for a later
-  `turn/end`. Use `--after-seq` and/or `--after-count` to resume from an explicit
-  cursor, and `--rpc-id` to wait for the turn created by `dispatch`.
-- `history <session-id>` prints raw history; add `--messages` for a compact transcript.
-- `list` prints known sessions and state.
-- `cancel <session-id>` requests cancellation.
-- `open` opens the browser UI in the platform default browser only when the user explicitly asks and the Codex Browser/WebView action is unavailable.
-
-Set `DSH_URL` to override `http://127.0.0.1:8765`, `DSH_HTTP_TIMEOUT` for each HTTP request, `DSH_TIMEOUT` for turn waiting, `DSH_POLL_INTERVAL` for polling, and `DSH_STARTUP_TIMEOUT` for local service startup. Pass global flags before the subcommand when preferred.
-
-Read [references/api.md](references/api.md) when debugging envelopes, response shapes, event parsing, trust-fence failures, or version compatibility.
-
-## Respect session configuration
-
-- Do not require a particular DSH agent preset or model. Reuse the session's
-  configured agent preset and model unless the user asks to change them. The
-  `minimal` agent preset is a sensible low-overhead default, not a protocol
-  requirement.
-- Select, enforce, and verify the DSH permission automatically as described
-  above. Never require manual permission configuration.
-- Treat `projections.values.permissions.currentValue` as the authoritative
-  effective permission. A natural-language instruction is not a substitute for
-  that enforced state.
-
-## Apply safeguards
-
-- Reuse the same session only for one coherent task and repository.
-- Do not send another `run` to a session while it is working. The local lock
-  protects bundled-client callers, but manual UI prompts or other clients can
-  still race with it.
-- Never include secrets, tokens, or unnecessary environment data in prompts or validation logs.
-- Avoid sending unbounded command output; include the command, exit code, and relevant tail or error excerpt.
-- Treat DSH HTTP errors, RPC errors, error turn endings, and timeouts as failures. Inspect history or the server log before retrying.
-- Do not start duplicate servers when `health` already succeeds.
-- Do not cancel a running session unless the user asks or cancellation is needed to recover the requested workflow.
+Use `debug` only for troubleshooting. Its low-level commands are documented in [references/api.md](references/api.md); they are not part of the normal collaboration flow.

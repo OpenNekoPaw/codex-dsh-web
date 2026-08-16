@@ -245,27 +245,15 @@ class DshClientTests(unittest.TestCase):
             with self.assertRaisesRegex(dsh_client.DshClientError, "denied"):
                 self.client.execute_command("session-1", "/permission read-only")
 
-    def test_rename_and_ui_target_use_the_title_projection(self) -> None:
+    def test_rename_returns_the_visible_title(self) -> None:
         renamed = self.client.rename("session-1", "Codex: inspect repo [session-1]")
         self.assertEqual(renamed["title"], "Codex: inspect repo [session-1]")
-        self.assertEqual(
-            dsh_client.ui_target(self.client, "session-1"),
-            {
-                "url": self.client.base_url,
-                "sessionId": "session-1",
-                "title": "Codex: inspect repo [session-1]",
-            },
-        )
-
-    def test_ui_target_requires_a_visible_title(self) -> None:
-        FakeDshHandler.title = None
-        with self.assertRaisesRegex(dsh_client.DshClientError, "no visible title"):
-            dsh_client.ui_target(self.client, "session-1")
 
     def test_dispatch_receipt_can_wait_for_the_correlated_turn(self) -> None:
         receipt = dsh_client.dispatch_prompt(
             self.client, "session-1", "work", "queue"
         )
+        self.assertEqual(receipt.session_id, "session-1")
         self.assertEqual(receipt.cursor, dsh_client.HistoryCursor(1, 1))
         self.assertTrue(receipt.rpc_id)
         self.assertEqual(
@@ -279,6 +267,79 @@ class DshClientTests(unittest.TestCase):
             ),
             "done",
         )
+
+    def test_wait_receipt_round_trip_hides_protocol_details(self) -> None:
+        receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-1",
+            cursor=dsh_client.HistoryCursor(length=7, sequence=12),
+        )
+        encoded = dsh_client.encode_wait_receipt(receipt)
+        self.assertNotIn("session-1", encoded)
+        self.assertEqual(dsh_client.decode_wait_receipt(encoded), receipt)
+        for invalid in ("", "not-a-receipt", dsh_client.encode_wait_receipt(receipt)[:-2]):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                dsh_client.DshClientError, "invalid wait receipt"
+            ):
+                dsh_client.decode_wait_receipt(invalid)
+
+    def test_task_creates_session_maps_intent_and_returns_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = dsh_client.run_task(
+                self.client,
+                cwd=directory,
+                session_id=None,
+                intent="read",
+                prompt="Inspect the repository",
+                show_ui=False,
+                timeout=1,
+                startup_timeout=1,
+                poll_interval=0.01,
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["sessionId"], "session-1")
+        self.assertEqual(result["permission"], "read-only")
+        self.assertEqual(result["answer"], "done")
+        self.assertEqual(FakeDshHandler.permission, "read-only")
+        self.assertEqual(FakeDshHandler.title, result["title"])
+        self.assertTrue(result["title"].startswith("Codex: Inspect the repository"))
+
+    def test_task_ui_returns_receipt_for_exact_session(self) -> None:
+        result = dsh_client.run_task(
+            self.client,
+            cwd=None,
+            session_id="session-1",
+            intent="write",
+            prompt="Implement the feature",
+            show_ui=True,
+            timeout=1,
+            startup_timeout=1,
+            poll_interval=0.01,
+        )
+        self.assertEqual(result["status"], "dispatched")
+        self.assertEqual(result["permission"], "workspace-write")
+        self.assertEqual(result["ui"]["url"], self.client.base_url)
+        self.assertEqual(result["ui"]["title"], result["title"])
+        receipt = dsh_client.decode_wait_receipt(result["receipt"])
+        self.assertEqual(receipt.session_id, "session-1")
+        self.assertEqual(
+            dsh_client.wait_for_turn(
+                self.client,
+                receipt.session_id,
+                receipt.cursor,
+                timeout=1,
+                poll_interval=0.01,
+                prompt_rpc_id=receipt.rpc_id,
+            ),
+            "done",
+        )
+
+    def test_task_starts_dsh_only_when_unavailable(self) -> None:
+        client = mock.Mock(base_url="http://127.0.0.1:8765")
+        client.health.side_effect = dsh_client.DshUnavailableError("refused")
+        with mock.patch.object(dsh_client, "start_dsh_server") as start:
+            dsh_client.ensure_server(client, 5, 0.1)
+        start.assert_called_once_with(client, 5, 0.1)
 
     def test_run_prompt_correlates_the_prompt_rpc_id(self) -> None:
         def queued_turns(request: dict[str, Any]) -> list[dict[str, Any]]:
@@ -406,10 +467,13 @@ class DshClientTests(unittest.TestCase):
         with self.assertRaisesRegex(dsh_client.DshClientError, "session array"):
             dsh_client.session_records({})
 
-    def test_bare_wait_snapshots_current_history(self) -> None:
-        old_events = list(FakeDshHandler.events)
+    def test_wait_command_decodes_receipt_and_returns_compact_json(self) -> None:
+        receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-1",
+            cursor=dsh_client.HistoryCursor(length=1, sequence=1),
+        )
         fake_client = mock.Mock()
-        fake_client.history.return_value = old_events
         with mock.patch.object(dsh_client, "DshClient", return_value=fake_client), mock.patch.object(
             dsh_client,
             "wait_for_turn",
@@ -417,11 +481,21 @@ class DshClientTests(unittest.TestCase):
         ) as wait_for_turn, mock.patch.object(
             sys,
             "argv",
-            ["dsh_client.py", "wait", "session-1"],
-        ), mock.patch("builtins.print"):
+            ["dsh_client.py", "wait", dsh_client.encode_wait_receipt(receipt)],
+        ), mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
             self.assertEqual(dsh_client.main(), 0)
-        cursor = wait_for_turn.call_args.args[2]
-        self.assertEqual(cursor, dsh_client.history_cursor(old_events))
+        wait_for_turn.assert_called_once_with(
+            fake_client,
+            "session-1",
+            receipt.cursor,
+            600.0,
+            2.0,
+            prompt_rpc_id="rpc-1",
+        )
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {"status": "completed", "sessionId": "session-1", "answer": "later"},
+        )
 
     def test_connection_refused_is_classified_as_unavailable(self) -> None:
         client = dsh_client.DshClient("http://127.0.0.1:1", 1)
@@ -558,12 +632,18 @@ class DshClientTests(unittest.TestCase):
             self.assertEqual(environment["PWD"], str(runtime_path))
             self.assertNotIn("OLDPWD", environment)
 
-    def test_create_requires_an_explicit_cwd(self) -> None:
+    def test_public_cli_is_small_and_task_requires_a_location(self) -> None:
         parser = dsh_client.build_parser()
+        subparsers = next(
+            action
+            for action in parser._actions
+            if isinstance(action, dsh_client.argparse._SubParsersAction)
+        )
+        self.assertEqual(set(subparsers.choices), {"doctor", "task", "wait", "debug"})
         with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(
             SystemExit
         ) as error:
-            parser.parse_args(["create"])
+            parser.parse_args(["task", "--intent", "write", "--prompt", "work"])
         self.assertEqual(error.exception.code, 2)
 
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
@@ -588,16 +668,15 @@ class DshClientTests(unittest.TestCase):
         self.assertTrue(report["server"]["reachable"])
         self.assertFalse(report["dsh"]["ok"])
 
-    def test_open_uses_the_platform_default_browser(self) -> None:
+    def test_debug_health_keeps_low_level_command_out_of_top_level(self) -> None:
+        fake_client = mock.Mock()
         with mock.patch.object(
-            sys, "argv", ["dsh_client.py", "open"]
+            sys, "argv", ["dsh_client.py", "debug", "health"]
         ), mock.patch.object(
-            dsh_client.webbrowser, "open", return_value=True
-        ) as open_browser, mock.patch("builtins.print"):
+            dsh_client, "DshClient", return_value=fake_client
+        ), mock.patch("builtins.print"):
             self.assertEqual(dsh_client.main(), 0)
-        open_browser.assert_called_once_with(
-            dsh_client.DEFAULT_URL, new=2, autoraise=True
-        )
+        fake_client.health.assert_called_once_with()
 
     def test_detached_process_options_are_platform_specific(self) -> None:
         with mock.patch.object(dsh_client.os, "name", "nt"):

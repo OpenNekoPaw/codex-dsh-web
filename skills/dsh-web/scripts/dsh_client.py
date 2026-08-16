@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import contextmanager
 import errno
 import hashlib
@@ -20,7 +21,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, NoReturn, Optional, Tuple, Union
@@ -34,6 +34,11 @@ DSH_PROJECT_URL = "https://github.com/deepseek-ai/deepseek-harness"
 DEFAULT_STARTUP_TIMEOUT = 20.0
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 PERMISSION_PRESETS = ("read-only", "workspace-write", "danger-full-access")
+INTENT_PERMISSIONS = {
+    "read": "read-only",
+    "write": "workspace-write",
+    "full-access": "danger-full-access",
+}
 DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -66,7 +71,8 @@ class ServerStartResult:
 
 
 @dataclass(frozen=True)
-class DispatchReceipt:
+class WaitReceipt:
+    session_id: str
     rpc_id: str
     cursor: HistoryCursor
 
@@ -433,9 +439,6 @@ class DshClient:
             raise DshClientError("session.create did not return a sessionId")
         return value["sessionId"]
 
-    def prompt(self, session_id: str, text: str, mode: str) -> Any:
-        return self.prompt_with_rpc_id(session_id, text, mode).value
-
     def prompt_with_rpc_id(self, session_id: str, text: str, mode: str) -> RpcResponse:
         return self.post_with_rpc_id(
             "session.prompt",
@@ -689,17 +692,6 @@ def ensure_session_idle(client: DshClient, session_id: str) -> None:
         )
 
 
-def session_title(value: dict[str, Any]) -> Optional[str]:
-    projections = value.get("projections")
-    if not isinstance(projections, dict):
-        return None
-    values = projections.get("values")
-    if not isinstance(values, dict):
-        return None
-    title = values.get("title")
-    return title if isinstance(title, str) and title else None
-
-
 def session_permission(value: dict[str, Any]) -> dict[str, Any]:
     projections = value.get("projections")
     if not isinstance(projections, dict):
@@ -756,15 +748,6 @@ def set_session_permission(
             "available": after["available"],
             "changed": changed,
         }
-
-
-def ui_target(client: DshClient, session_id: str) -> dict[str, str]:
-    title = session_title(client.history_page(session_id))
-    if title is None:
-        raise DshClientError(
-            "session has no visible title; rename it before selecting it in DSH Web"
-        )
-    return {"url": client.base_url, "sessionId": session_id, "title": title}
 
 
 @contextmanager
@@ -846,12 +829,146 @@ def run_prompt(
 
 def dispatch_prompt(
     client: DshClient, session_id: str, text: str, mode: str
-) -> DispatchReceipt:
+) -> WaitReceipt:
     with session_lock(client.base_url, session_id):
         ensure_session_idle(client, session_id)
         cursor = history_cursor(client.history(session_id))
         response = client.prompt_with_rpc_id(session_id, text, mode)
-        return DispatchReceipt(rpc_id=response.rpc_id, cursor=cursor)
+        return WaitReceipt(
+            session_id=session_id,
+            rpc_id=response.rpc_id,
+            cursor=cursor,
+        )
+
+
+def encode_wait_receipt(receipt: WaitReceipt) -> str:
+    payload = {
+        "v": 1,
+        "session": receipt.session_id,
+        "rpc": receipt.rpc_id,
+        "count": receipt.cursor.length,
+        "seq": receipt.cursor.sequence,
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_wait_receipt(value: str) -> WaitReceipt:
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.b64decode(
+            value + padding,
+            altchars=b"-_",
+            validate=True,
+        )
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DshClientError("invalid wait receipt") from error
+    if not isinstance(payload, dict) or payload.get("v") != 1:
+        raise DshClientError("invalid wait receipt")
+    session_id = payload.get("session")
+    rpc_id = payload.get("rpc")
+    count = payload.get("count")
+    sequence = payload.get("seq")
+    if (
+        not isinstance(session_id, str)
+        or not session_id
+        or not isinstance(rpc_id, str)
+        or not rpc_id
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        or (
+            sequence is not None
+            and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0)
+        )
+    ):
+        raise DshClientError("invalid wait receipt")
+    return WaitReceipt(
+        session_id=session_id,
+        rpc_id=rpc_id,
+        cursor=HistoryCursor(length=count, sequence=sequence),
+    )
+
+
+def task_title(prompt: str, session_id: str) -> str:
+    summary = " ".join(prompt.split())
+    if not summary:
+        raise DshClientError("task prompt must not be empty")
+    if len(summary) > 56:
+        summary = f"{summary[:53].rstrip()}..."
+    compact_id = "".join(character for character in session_id if character.isalnum())
+    if len(compact_id) >= 8:
+        suffix = f"{compact_id[:4]}-{compact_id[-4:]}"
+    else:
+        suffix = compact_id or "session"
+    return f"Codex: {summary} [{suffix}]"
+
+
+def ensure_server(
+    client: DshClient, startup_timeout: float, poll_interval: float
+) -> None:
+    try:
+        client.health()
+    except DshUnavailableError:
+        start_dsh_server(client, startup_timeout, poll_interval)
+
+
+def run_task(
+    client: DshClient,
+    *,
+    cwd: Optional[str],
+    session_id: Optional[str],
+    intent: str,
+    prompt: str,
+    show_ui: bool,
+    timeout: float,
+    startup_timeout: float,
+    poll_interval: float,
+) -> dict[str, Any]:
+    ensure_server(client, startup_timeout, poll_interval)
+    if session_id is None:
+        if cwd is None:
+            raise DshClientError("task requires --cwd when --session is not provided")
+        resolved_cwd = Path(cwd).expanduser().resolve()
+        if not resolved_cwd.is_dir():
+            raise DshClientError(f"session cwd is not a directory: {resolved_cwd}")
+        session_id = client.create(str(resolved_cwd))
+
+    permission = INTENT_PERMISSIONS[intent]
+    permission_result = set_session_permission(client, session_id, permission)
+    title = client.rename(session_id, task_title(prompt, session_id))["title"]
+
+    output: dict[str, Any] = {
+        "sessionId": session_id,
+        "permission": permission_result["currentValue"],
+        "title": title,
+    }
+    if show_ui:
+        dispatch = dispatch_prompt(client, session_id, prompt, "queue")
+        output.update(
+            {
+                "status": "dispatched",
+                "ui": {"url": client.base_url, "title": title},
+                "receipt": encode_wait_receipt(dispatch),
+            }
+        )
+        return output
+
+    output.update(
+        {
+            "status": "completed",
+            "answer": run_prompt(
+                client,
+                session_id,
+                prompt,
+                "queue",
+                timeout,
+                poll_interval,
+            ),
+        }
+    )
+    return output
 
 
 def compact_messages(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -880,7 +997,7 @@ def compact_messages(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Call the DSH Web HTTP API and wait for session turns."
+        description="Run Codex tasks through a local DSH Web service."
     )
     parser.add_argument("--url", default=os.environ.get("DSH_URL", DEFAULT_URL))
     parser.add_argument(
@@ -910,70 +1027,48 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("doctor", help="check Python, DSH, npm, and server readiness")
-    subparsers.add_parser("health", help="check whether DSH Web is reachable")
-    subparsers.add_parser("start", help="start a local DSH Web service if needed")
 
-    create_parser = subparsers.add_parser(
-        "create", help="create a session and enforce its permission preset"
+    task_parser = subparsers.add_parser(
+        "task", help="create or reuse a session, send a prompt, and return the result"
     )
-    create_parser.add_argument("--cwd", required=True)
-    create_parser.add_argument(
-        "--permission",
-        choices=PERMISSION_PRESETS,
-        default="workspace-write",
-        help="permission preset to enforce and verify (default: workspace-write)",
+    location = task_parser.add_mutually_exclusive_group(required=True)
+    location.add_argument("--cwd", help="repository path for a new session")
+    location.add_argument("--session", help="existing DSH session ID")
+    task_parser.add_argument(
+        "--intent",
+        choices=tuple(INTENT_PERMISSIONS),
+        required=True,
+        help="read, write, or explicitly requested full access",
+    )
+    task_parser.add_argument("--prompt", required=True)
+    task_parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="dispatch immediately so Codex can select the session in DSH Web",
     )
 
-    permission_parser = subparsers.add_parser(
+    wait_parser = subparsers.add_parser(
+        "wait", help="wait for a task previously dispatched with task --ui"
+    )
+    wait_parser.add_argument("receipt")
+
+    debug_parser = subparsers.add_parser(
+        "debug", help="low-level service and session diagnostics"
+    )
+    debug_commands = debug_parser.add_subparsers(dest="debug_command", required=True)
+    debug_commands.add_parser("health", help="check whether DSH Web is reachable")
+    debug_commands.add_parser("start", help="start a local DSH Web service if needed")
+    history_parser = debug_commands.add_parser("history", help="print session history")
+    history_parser.add_argument("session_id")
+    history_parser.add_argument("--messages", action="store_true")
+    debug_commands.add_parser("list", help="list sessions")
+    cancel_parser = debug_commands.add_parser("cancel", help="cancel a session")
+    cancel_parser.add_argument("session_id")
+    permission_parser = debug_commands.add_parser(
         "permission", help="inspect or enforce a session permission preset"
     )
     permission_parser.add_argument("session_id")
     permission_parser.add_argument("preset", nargs="?", choices=PERMISSION_PRESETS)
-
-    rename_parser = subparsers.add_parser(
-        "rename", help="set a stable title for browser selection"
-    )
-    rename_parser.add_argument("session_id")
-    rename_parser.add_argument("title")
-
-    ui_target_parser = subparsers.add_parser(
-        "ui-target", help="print the URL and visible title for a session"
-    )
-    ui_target_parser.add_argument("session_id")
-
-    prompt_parser = subparsers.add_parser("prompt", help="queue a prompt")
-    prompt_parser.add_argument("session_id")
-    prompt_parser.add_argument("text")
-    prompt_parser.add_argument("--mode", default="queue")
-
-    run_parser = subparsers.add_parser("run", help="prompt and wait for the new turn")
-    run_parser.add_argument("session_id")
-    run_parser.add_argument("text")
-    run_parser.add_argument("--mode", default="queue")
-
-    dispatch_parser = subparsers.add_parser(
-        "dispatch", help="prompt without waiting and print a correlated wait receipt"
-    )
-    dispatch_parser.add_argument("session_id")
-    dispatch_parser.add_argument("text")
-    dispatch_parser.add_argument("--mode", default="queue")
-
-    history_parser = subparsers.add_parser("history", help="print session history")
-    history_parser.add_argument("session_id")
-    history_parser.add_argument("--messages", action="store_true")
-
-    wait_parser = subparsers.add_parser("wait", help="wait for a later turn/end")
-    wait_parser.add_argument("session_id")
-    wait_parser.add_argument("--after-seq", type=int)
-    wait_parser.add_argument("--after-count", type=int)
-    wait_parser.add_argument("--rpc-id")
-
-    subparsers.add_parser("list", help="list sessions")
-
-    cancel_parser = subparsers.add_parser("cancel", help="cancel a session")
-    cancel_parser.add_argument("session_id")
-
-    subparsers.add_parser("open", help="open DSH Web in the default browser")
     return parser
 
 
@@ -990,21 +1085,53 @@ def main() -> int:
     validate_positive(parser, "--timeout", args.timeout)
     validate_positive(parser, "--poll-interval", args.poll_interval)
     validate_positive(parser, "--startup-timeout", args.startup_timeout)
-    if args.command == "wait":
-        if args.after_seq is not None and args.after_seq < 0:
-            parser.error("--after-seq must be zero or greater")
-        if args.after_count is not None and args.after_count < 0:
-            parser.error("--after-count must be zero or greater")
     client = DshClient(args.url, args.http_timeout)
 
     if args.command == "doctor":
         report = doctor_report(client)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ready"] else 1
-    if args.command == "health":
+    if args.command == "task":
+        print(
+            json.dumps(
+                run_task(
+                    client,
+                    cwd=args.cwd,
+                    session_id=args.session,
+                    intent=args.intent,
+                    prompt=args.prompt,
+                    show_ui=args.ui,
+                    timeout=args.timeout,
+                    startup_timeout=args.startup_timeout,
+                    poll_interval=args.poll_interval,
+                ),
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "wait":
+        receipt = decode_wait_receipt(args.receipt)
+        answer = wait_for_turn(
+            client,
+            receipt.session_id,
+            receipt.cursor,
+            args.timeout,
+            args.poll_interval,
+            prompt_rpc_id=receipt.rpc_id,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "sessionId": receipt.session_id,
+                    "answer": answer,
+                },
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "debug" and args.debug_command == "health":
         client.health()
         print(f"DSH Web is reachable at {client.base_url}")
-    elif args.command == "start":
+    elif args.command == "debug" and args.debug_command == "start":
         result = start_dsh_server(client, args.startup_timeout, args.poll_interval)
         if result.started:
             pid = f" (pid {result.pid})" if result.pid is not None else ""
@@ -1014,14 +1141,7 @@ def main() -> int:
             )
         else:
             print(f"DSH Web is already reachable at {client.base_url}")
-    elif args.command == "create":
-        cwd = str(Path(args.cwd).expanduser().resolve())
-        if not Path(cwd).is_dir():
-            raise DshClientError(f"session cwd is not a directory: {cwd}")
-        session_id = client.create(cwd)
-        set_session_permission(client, session_id, args.permission)
-        print(session_id)
-    elif args.command == "permission":
+    elif args.command == "debug" and args.debug_command == "permission":
         if args.preset is None:
             output = {
                 "sessionId": args.session_id,
@@ -1030,73 +1150,14 @@ def main() -> int:
         else:
             output = set_session_permission(client, args.session_id, args.preset)
         print(json.dumps(output, ensure_ascii=False))
-    elif args.command == "rename":
-        print(json.dumps(client.rename(args.session_id, args.title), ensure_ascii=False))
-    elif args.command == "ui-target":
-        print(json.dumps(ui_target(client, args.session_id), ensure_ascii=False))
-    elif args.command == "prompt":
-        print(json.dumps(client.prompt(args.session_id, args.text, args.mode), ensure_ascii=False))
-    elif args.command == "run":
-        print(
-            run_prompt(
-                client,
-                args.session_id,
-                args.text,
-                args.mode,
-                args.timeout,
-                args.poll_interval,
-            )
-        )
-    elif args.command == "dispatch":
-        receipt = dispatch_prompt(client, args.session_id, args.text, args.mode)
-        print(
-            json.dumps(
-                {
-                    "sessionId": args.session_id,
-                    "rpcId": receipt.rpc_id,
-                    "afterCount": receipt.cursor.length,
-                    "afterSeq": receipt.cursor.sequence,
-                },
-                ensure_ascii=False,
-            )
-        )
-    elif args.command == "history":
+    elif args.command == "debug" and args.debug_command == "history":
         events = client.history(args.session_id)
         output = compact_messages(events) if args.messages else events
         print(json.dumps(output, ensure_ascii=False, indent=2))
-    elif args.command == "wait":
-        current_events = client.history(args.session_id)
-        if args.after_count is None and args.after_seq is None:
-            cursor = history_cursor(current_events)
-        else:
-            cursor = HistoryCursor(
-                length=(
-                    args.after_count
-                    if args.after_count is not None
-                    else len(current_events)
-                ),
-                sequence=args.after_seq,
-            )
-        print(
-            wait_for_turn(
-                client,
-                args.session_id,
-                cursor,
-                args.timeout,
-                args.poll_interval,
-                prompt_rpc_id=args.rpc_id,
-            )
-        )
-    elif args.command == "list":
+    elif args.command == "debug" and args.debug_command == "list":
         print(json.dumps(client.list_sessions(), ensure_ascii=False, indent=2))
-    elif args.command == "cancel":
+    elif args.command == "debug" and args.debug_command == "cancel":
         print(json.dumps(client.cancel(args.session_id), ensure_ascii=False))
-    elif args.command == "open":
-        if not webbrowser.open(client.base_url, new=2, autoraise=True):
-            raise DshClientError(
-                f"no default browser accepted {client.base_url}; open the URL manually"
-            )
-        print(client.base_url)
     return 0
 
 

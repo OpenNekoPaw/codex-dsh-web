@@ -1,4 +1,4 @@
 interface:
   display_name: "DSH Web"
   short_description: "Drive DSH Web sessions from Codex"
-  default_prompt: "Use $dsh-web through its Python client. Automatically enforce the task-appropriate DSH permission, open DSH Web, select and verify the exact active session, and use Computer Use only if Browser control fails."
+  default_prompt: "Use $dsh-web for this task, show the exact active DSH session when requested, then inspect and verify the result."
