@@ -87,7 +87,7 @@ Open `ui.url` exactly as returned. The default is `http://localhost:8765`; never
 
 Treat `ui.ownerId`, not the DSH service URL or DSH session ID, as the UI owner. One Codex task may own at most one live DSH tab, and that tab may switch among multiple DSH sessions.
 
-The registry defaults to 10 concurrent Codex UI owners and a two-hour activity TTL. `DSH_UI_LIMIT` and `DSH_UI_ACTIVITY_TTL` may override those values.
+The client waits up to one hour for a DSH turn by default. The registry defaults to 10 concurrent Codex UI owners and a five-hour activity TTL. `DSH_TIMEOUT`, `DSH_UI_LIMIT`, and `DSH_UI_ACTIVITY_TTL` may override those values.
 
 Before opening a tab:
 

@@ -32,8 +32,9 @@ DSH_PACKAGE = "@deepseek-ai/dsh"
 DSH_INSTALL_COMMAND = f"npm install --global {DSH_PACKAGE}"
 DSH_PROJECT_URL = "https://github.com/deepseek-ai/deepseek-harness"
 DEFAULT_STARTUP_TIMEOUT = 20.0
+DEFAULT_TASK_TIMEOUT = 3600.0
 DEFAULT_UI_LIMIT = 10
-DEFAULT_UI_ACTIVITY_TTL = 2 * 3600.0
+DEFAULT_UI_ACTIVITY_TTL = 5 * 3600.0
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 PERMISSION_PRESETS = ("read-only", "workspace-write", "danger-full-access")
 INTENT_PERMISSIONS = {
@@ -1313,7 +1314,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=env_float("DSH_TIMEOUT", 600.0),
+        default=env_float("DSH_TIMEOUT", DEFAULT_TASK_TIMEOUT),
         help="timeout while waiting for a turn in seconds",
     )
     parser.add_argument(

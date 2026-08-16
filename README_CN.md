@@ -79,7 +79,7 @@ Codex 会先派发任务，再复用当前 Codex 任务在 Browser 侧栏中的 
 
 创建新 session 时，客户端会先按仓库的规范化路径幂等创建或解析 DSH 工作区，再用该工作区 ID 创建 session，并校验归属关系。这样新 session 会保存在对应仓库分组中，不再落入“未分组”。
 
-UI 所有权以 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 为键，不以 DSH 服务地址或 DSH session ID 为键。客户端默认最多允许 10 个并发 Codex UI owner，并按 2 小时 TTL 清理遗留 activity。最后一个 activity 会通知 Codex 关闭共享标签；关闭 UI 不会取消 DSH session。
+UI 所有权以 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 为键，不以 DSH 服务地址或 DSH session ID 为键。客户端默认等待 DSH turn 最多 1 小时，最多允许 10 个并发 Codex UI owner，并按 5 小时 TTL 清理遗留 activity。最后一个 activity 会通知 Codex 关闭共享标签；关闭 UI 不会取消 DSH session。
 
 插件不得使用 Computer Use 画中画、外部浏览器或 headless 回退承载该界面。如果内置 Browser 侧栏不可用，Codex 会先释放 UI 所有权并报告限制，而不是静默切换界面类型。
 

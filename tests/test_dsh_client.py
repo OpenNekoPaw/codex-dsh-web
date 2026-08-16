@@ -463,8 +463,9 @@ class DshClientTests(unittest.TestCase):
                 dsh_client.codex_thread_id()
 
     def test_ui_registry_defaults(self) -> None:
+        self.assertEqual(dsh_client.DEFAULT_TASK_TIMEOUT, 3600.0)
         self.assertEqual(dsh_client.DEFAULT_UI_LIMIT, 10)
-        self.assertEqual(dsh_client.DEFAULT_UI_ACTIVITY_TTL, 2 * 3600.0)
+        self.assertEqual(dsh_client.DEFAULT_UI_ACTIVITY_TTL, 5 * 3600.0)
 
     def test_ui_activities_reuse_owner_and_close_after_final_release(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
@@ -677,7 +678,7 @@ class DshClientTests(unittest.TestCase):
             fake_client,
             "session-1",
             receipt.cursor,
-            600.0,
+            3600.0,
             2.0,
             prompt_rpc_id="rpc-1",
         )

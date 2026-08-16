@@ -14,7 +14,7 @@ On Windows, `py -3` can replace `python3`.
 | --- | --- | --- |
 | `--url` | `DSH_URL` or `http://localhost:8765` | DSH Web base URL |
 | `--http-timeout` | 30 seconds | Per-request timeout |
-| `--timeout` | 600 seconds | Task completion timeout |
+| `--timeout` | 3600 seconds | Task completion timeout |
 | `--poll-interval` | 2 seconds | History polling interval |
 | `--startup-timeout` | 20 seconds | Local server startup timeout |
 
@@ -140,12 +140,12 @@ The timeout options also accept:
 
 - `DSH_URL`
 - `DSH_HTTP_TIMEOUT`
-- `DSH_TIMEOUT`
+- `DSH_TIMEOUT` (default: `3600` seconds)
 - `DSH_POLL_INTERVAL`
 - `DSH_STARTUP_TIMEOUT`
 - `DSH_HOME`
 - `DSH_UI_LIMIT` (default: `10` concurrent Codex task owners)
-- `DSH_UI_ACTIVITY_TTL` (default: `7200` seconds)
+- `DSH_UI_ACTIVITY_TTL` (default: `18000` seconds)
 - `DSH_UI_OWNER_ID` (explicit non-Codex owner override)
 
 Automatic startup is limited to plain HTTP loopback URLs. The managed process runs from `$DSH_HOME/runtime/codex-dsh-web/<port>`, separate from the repository and plugin cache.

@@ -79,7 +79,7 @@ Codex dispatches the task, reuses this Codex task's DSH Web tab in the Browser s
 
 For a new session, the client idempotently creates or resolves the repository's canonical DSH workspace first, then creates the session with that workspace ID and verifies the attachment. This keeps sessions under the repository group instead of the ungrouped section.
 
-UI ownership is keyed by `CODEX_THREAD_ID` or `CODEX_SESSION_ID`, not by the DSH service URL or DSH session ID. The client limits concurrent Codex UI owners to 10 by default and prunes abandoned activity after a two-hour TTL. The final activity tells Codex to close the shared tab; closing UI never cancels a DSH session.
+UI ownership is keyed by `CODEX_THREAD_ID` or `CODEX_SESSION_ID`, not by the DSH service URL or DSH session ID. The client waits up to one hour for a DSH turn, limits concurrent Codex UI owners to 10, and prunes abandoned activity after a five-hour TTL by default. The final activity tells Codex to close the shared tab; closing UI never cancels a DSH session.
 
 The plugin must not use Computer Use picture-in-picture, an external browser, or a headless fallback for this UI. If the in-app Browser side panel is unavailable, Codex releases its UI ownership and reports that limitation instead of silently switching surfaces.
 
