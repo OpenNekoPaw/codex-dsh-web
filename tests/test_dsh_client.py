@@ -666,6 +666,13 @@ class DshClientTests(unittest.TestCase):
         self.assertTrue(default_args.ui)
         self.assertFalse(headless_args.ui)
 
+    def test_skill_requires_browser_side_panel_and_forbids_computer_use(self) -> None:
+        skill_path = MODULE_PATH.parents[1] / "SKILL.md"
+        skill = skill_path.read_text(encoding="utf-8")
+        self.assertIn("in-app Browser side panel", skill)
+        self.assertIn("Never use Computer Use", skill)
+        self.assertIn("picture-in-picture", skill)
+
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")
         client.health.side_effect = dsh_client.DshUnavailableError("refused")

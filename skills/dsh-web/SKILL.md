@@ -1,11 +1,11 @@
 ---
 name: dsh-web
-description: Delegate a development task to a local DSH Web session, always open and select the exact active session in Codex Desktop, then let Codex inspect and verify the result. Use when the user asks to use, open, call, or collaborate with DSH Web or DeepSeek Harness Web.
+description: Delegate a development task to a local DSH Web session, always open and select the exact active session in the Codex in-app Browser side panel, then let Codex inspect and verify the result. Never use Computer Use picture-in-picture for the DSH UI. Use when the user asks to use, open, call, or collaborate with DSH Web or DeepSeek Harness Web.
 ---
 
 # DSH Web
 
-Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Always show the exact task session in Codex Browser. Codex remains responsible for inspecting files and running validation.
+Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Always show the exact task session in the Codex in-app Browser side panel. Codex remains responsible for inspecting files and running validation.
 
 ## Locate the client
 
@@ -77,11 +77,11 @@ A dispatched result contains:
 - `ui.title`: the exact session title.
 - `receipt`: an opaque value used by `wait`.
 
-Immediately use the Codex in-app Browser control to open `ui.url`. Do not merely print the URL or return a link.
+Immediately use the available in-app Browser control skill to open `ui.url` in Codex's side-panel WebView. Explicitly select the in-app Browser surface; do not let URL-based browser selection choose another surface. Do not merely print the URL or return a link.
 
 DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match. Do not continue while an old session or the new-session page is selected.
 
-Use Computer Use only when normal Browser control is unavailable or cannot operate the page after a retry.
+Never use Computer Use, `@Computer`, an external browser, or picture-in-picture to open or control the DSH UI. If the in-app Browser skill or side panel is unavailable, report that exact limitation instead of substituting another surface. API prompting and result collection may continue, but do not claim that the UI was opened.
 
 Only after the exact session is visibly selected, wait for the result:
 
@@ -91,7 +91,7 @@ Only after the exact session is visibly selected, wait for the result:
 
 Do not decode or edit the receipt.
 
-If the user only asks to open DSH Web without delegating a task, run `doctor`. If the server is not reachable but DSH is installed, run `debug start`, then open the reported URL in the in-app Browser.
+If the user only asks to open DSH Web without delegating a task, run `doctor`. If the server is not reachable but DSH is installed, run `debug start`, then open the reported URL in the in-app Browser side panel under the same no-Computer-Use rule.
 
 ## Verify independently
 

@@ -86,7 +86,7 @@ UI mode is the default; `--ui` makes the intent explicit. The command dispatches
 }
 ```
 
-After Codex selects the exact title in the DSH Web UI:
+Codex must open `ui.url` in the in-app Browser side panel, never Computer Use picture-in-picture or an external browser. After Codex selects the exact title in that DSH Web UI:
 
 ```text
 python3 dsh_client.py wait <receipt>
