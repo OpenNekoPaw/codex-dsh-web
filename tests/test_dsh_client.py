@@ -65,6 +65,9 @@ def completed_turn(
 
 class FakeDshHandler(BaseHTTPRequestHandler):
     events: list[dict[str, Any]] = []
+    requests: list[dict[str, Any]] = []
+    workspaces: list[dict[str, Any]] = []
+    attach_sessions = True
     running = False
     http_status = 200
     raw_response: Optional[bytes] = None
@@ -86,6 +89,7 @@ class FakeDshHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers["content-length"])
         request = json.loads(self.rfile.read(length))
+        type(self).requests.append(request)
         if self.http_status != 200:
             self.send_response(self.http_status)
             self.end_headers()
@@ -93,7 +97,41 @@ class FakeDshHandler(BaseHTTPRequestHandler):
             return
 
         method = request["method"]
-        if method == "session.create":
+        if method == "workspace.create":
+            path = request["payload"]["path"]
+            workspace = next(
+                (item for item in self.workspaces if item["path"] == path), None
+            )
+            created = workspace is None
+            if workspace is None:
+                workspace = {
+                    "workspaceId": f"workspace-{len(self.workspaces) + 1}",
+                    "path": path,
+                    "title": Path(path).name,
+                    "sessionIds": [],
+                    "createdAt": "2026-08-16T00:00:00.000Z",
+                    "updatedAt": "2026-08-16T00:00:00.000Z",
+                }
+                self.workspaces.append(workspace)
+            value = {"workspace": workspace, "created": created}
+        elif method == "workspace.list":
+            value = {
+                "items": self.workspaces,
+                "archivedSessionIds": [],
+            }
+        elif method == "session.create":
+            workspace_id = request["payload"].get("workspaceId")
+            workspace = next(
+                (
+                    item
+                    for item in self.workspaces
+                    if item["workspaceId"] == workspace_id
+                ),
+                None,
+            )
+            if workspace is not None and type(self).attach_sessions:
+                if "session-1" not in workspace["sessionIds"]:
+                    workspace["sessionIds"].insert(0, "session-1")
             value: Any = {"sessionId": "session-1"}
         elif method == "session.prompt":
             factory = type(self).prompt_events
@@ -179,6 +217,9 @@ class DshClientTests(unittest.TestCase):
         FakeDshHandler.events = [
             event(1, "turn/end", {"turn": 0, "reason": {"kind": "completed"}})
         ]
+        FakeDshHandler.requests = []
+        FakeDshHandler.workspaces = []
+        FakeDshHandler.attach_sessions = True
         FakeDshHandler.running = False
         FakeDshHandler.http_status = 200
         FakeDshHandler.raw_response = None
@@ -189,10 +230,40 @@ class DshClientTests(unittest.TestCase):
 
     def test_health_create_list_and_cancel(self) -> None:
         self.client.health()
-        self.assertEqual(self.client.create("/tmp"), "session-1")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.client.create(directory), "session-1")
         records = dsh_client.session_records(self.client.list_sessions())
         self.assertEqual(records[0]["sessionId"], "session-1")
         self.assertTrue(self.client.cancel("session-1")["cancelled"])
+
+    def test_create_reuses_workspace_and_attaches_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            expected_path = str(Path(directory).resolve())
+            self.assertEqual(self.client.create(directory), "session-1")
+            self.assertEqual(self.client.create(directory), "session-1")
+
+        self.assertEqual(len(FakeDshHandler.workspaces), 1)
+        self.assertEqual(FakeDshHandler.workspaces[0]["path"], expected_path)
+        self.assertEqual(FakeDshHandler.workspaces[0]["sessionIds"], ["session-1"])
+        create_requests = [
+            request
+            for request in FakeDshHandler.requests
+            if request["method"] == "session.create"
+        ]
+        self.assertEqual(
+            [request["payload"] for request in create_requests],
+            [
+                {"workspaceId": "workspace-1"},
+                {"workspaceId": "workspace-1"},
+            ],
+        )
+
+    def test_create_fails_when_dsh_does_not_attach_session(self) -> None:
+        FakeDshHandler.attach_sessions = False
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            dsh_client.DshClientError, "did not attach"
+        ):
+            self.client.create(directory)
 
     def test_set_permission_executes_command_and_verifies_projection(self) -> None:
         result = dsh_client.set_session_permission(

@@ -1,6 +1,6 @@
 {
   "name": "codex-dsh-web",
-  "version": "0.2.3+codex.20260816041931",
+  "version": "0.2.3+codex.20260816044333",
   "description": "Drive DSH Web sessions through one managed UI tab per Codex task.",
   "author": {
     "name": "OpenNekoPaw",

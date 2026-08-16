@@ -58,7 +58,7 @@ Intent mapping:
 | `write` | `workspace-write` |
 | `full-access` | `danger-full-access` |
 
-The command checks health, starts a refused local loopback service, creates or reuses the session, verifies permissions, sets a stable title, and correlates the answer to its prompt.
+The command checks health, starts a refused local loopback service, creates or reuses the repository's registered DSH workspace, attaches each new session to that workspace, verifies permissions, sets a stable title, and correlates the answer to its prompt. Workspace creation is idempotent for the same canonical directory, so repeated sessions do not create duplicate workspace groups or fall into the ungrouped section.
 
 ## Default UI task and wait
 

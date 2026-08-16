@@ -470,11 +470,47 @@ class DshClient:
         except (TimeoutError, socket.timeout) as error:
             raise DshClientError("health check timed out") from error
 
+    def list_workspaces(self) -> dict[str, Any]:
+        value = self.post("workspace.list", {})
+        if not isinstance(value, dict) or not isinstance(value.get("items"), list):
+            raise DshClientError("workspace.list did not return an items array")
+        return value
+
+    def ensure_workspace(self, cwd: str) -> dict[str, Any]:
+        path = str(Path(cwd).expanduser().resolve())
+        value = self.post("workspace.create", {"path": path})
+        workspace = value.get("workspace") if isinstance(value, dict) else None
+        if (
+            not isinstance(workspace, dict)
+            or not isinstance(workspace.get("workspaceId"), str)
+            or not isinstance(workspace.get("path"), str)
+            or not isinstance(workspace.get("sessionIds"), list)
+        ):
+            raise DshClientError("workspace.create did not return a valid workspace")
+        return workspace
+
     def create(self, cwd: str) -> str:
-        value = self.post("session.create", {"cwd": cwd})
+        workspace = self.ensure_workspace(cwd)
+        workspace_id = workspace["workspaceId"]
+        value = self.post("session.create", {"workspaceId": workspace_id})
         if not isinstance(value, dict) or not isinstance(value.get("sessionId"), str):
             raise DshClientError("session.create did not return a sessionId")
-        return value["sessionId"]
+        session_id = value["sessionId"]
+
+        workspaces = self.list_workspaces()
+        attached = any(
+            isinstance(item, dict)
+            and item.get("workspaceId") == workspace_id
+            and isinstance(item.get("sessionIds"), list)
+            and session_id in item["sessionIds"]
+            for item in workspaces["items"]
+        )
+        if not attached:
+            raise DshClientError(
+                f'session.create returned "{session_id}" but DSH did not attach it '
+                f'to workspace "{workspace_id}"'
+            )
+        return session_id
 
     def prompt_with_rpc_id(self, session_id: str, text: str, mode: str) -> RpcResponse:
         return self.post_with_rpc_id(

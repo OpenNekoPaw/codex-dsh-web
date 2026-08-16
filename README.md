@@ -11,7 +11,7 @@ Codex sends the task through DSH Web's local API, opens the exact active session
 ## What it does
 
 - Reuses one local DSH Web service across multiple independent sessions.
-- Creates or continues a session for the target repository.
+- Creates or continues a session for the target repository and registers new sessions under that repository's DSH workspace.
 - Chooses and verifies the DSH permission automatically.
 - Sends a task and waits for the matching answer.
 - Reuses at most one DSH Browser tab per Codex task and switches that tab among DSH sessions.
@@ -76,6 +76,8 @@ Use $dsh-web to implement this feature.
 ```
 
 Codex dispatches the task, reuses this Codex task's DSH Web tab in the Browser side panel, selects the session by its unique title, verifies the visible conversation, and then waits for the result. Multiple DSH sessions in the same Codex task switch inside that tab instead of opening more tabs.
+
+For a new session, the client idempotently creates or resolves the repository's canonical DSH workspace first, then creates the session with that workspace ID and verifies the attachment. This keeps sessions under the repository group instead of the ungrouped section.
 
 UI ownership is keyed by `CODEX_THREAD_ID` or `CODEX_SESSION_ID`, not by the DSH service URL or DSH session ID. The client limits concurrent Codex UI owners to 10 by default and prunes abandoned activity after a two-hour TTL. The final activity tells Codex to close the shared tab; closing UI never cancels a DSH session.
 

@@ -40,7 +40,7 @@ For a new session:
 The client automatically:
 
 1. Reuses a healthy DSH Web service or starts one after connection refusal.
-2. Creates the session in the requested repository.
+2. Creates or reuses the DSH workspace for the requested repository and attaches the new session to it, so the session is not left ungrouped.
 3. Maps intent to and verifies the effective DSH permission.
 4. Assigns a unique visible title.
 5. Dispatches the prompt and returns the exact UI title plus an opaque wait receipt.

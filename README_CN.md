@@ -11,7 +11,7 @@ Codex 通过 DSH Web 本地 API 发送任务，默认在内置 Browser 侧栏中
 ## 功能
 
 - 多个独立 session 复用一个本地 DSH Web 服务。
-- 为目标仓库创建或继续已有 session。
+- 为目标仓库创建或继续已有 session，并把新 session 登记到该仓库的 DSH 工作区。
 - 自动选择并验证 DSH 权限。
 - 发送任务并等待匹配的回答。
 - 每个 Codex 任务最多复用一个 DSH Browser 标签，并在其中切换多个 DSH session。
@@ -76,6 +76,8 @@ DSH 执行轨迹默认打开，无需额外说明 UI：
 ```
 
 Codex 会先派发任务，再复用当前 Codex 任务在 Browser 侧栏中的 DSH Web 标签，按唯一标题选择 session，验证可见会话，然后等待结果。同一 Codex 任务中的多个 DSH session 会在这个标签内切换，不再持续新增标签。
+
+创建新 session 时，客户端会先按仓库的规范化路径幂等创建或解析 DSH 工作区，再用该工作区 ID 创建 session，并校验归属关系。这样新 session 会保存在对应仓库分组中，不再落入“未分组”。
 
 UI 所有权以 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 为键，不以 DSH 服务地址或 DSH session ID 为键。客户端默认最多允许 10 个并发 Codex UI owner，并按 2 小时 TTL 清理遗留 activity。最后一个 activity 会通知 Codex 关闭共享标签；关闭 UI 不会取消 DSH session。
 
