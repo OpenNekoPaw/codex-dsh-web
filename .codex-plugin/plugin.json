@@ -1,7 +1,7 @@
 {
   "name": "codex-dsh-web",
-  "version": "0.2.3",
-  "description": "Drive and verify DSH Web sessions from Codex.",
+  "version": "0.2.3+codex.20260816041931",
+  "description": "Drive DSH Web sessions through one managed UI tab per Codex task.",
   "author": {
     "name": "OpenNekoPaw",
     "url": "https://github.com/OpenNekoPaw"
@@ -18,8 +18,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "DSH Web for Codex",
-    "shortDescription": "Delegate tasks to local DSH Web sessions.",
-    "longDescription": "Delegate tasks to local DSH Web sessions, open the exact active session in the Codex in-app Browser side panel, and independently verify the result.",
+    "shortDescription": "Share one managed DSH Web UI per Codex task.",
+    "longDescription": "Delegate tasks to local DSH Web sessions, reuse one managed in-app Browser tab per Codex task, release it after the final UI activity, and independently verify the result.",
     "developerName": "OpenNekoPaw",
     "category": "Productivity",
     "websiteURL": "https://github.com/OpenNekoPaw/codex-dsh-web",
@@ -29,9 +29,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Open DSH Web in the Codex in-app Browser side panel, not Computer Use picture-in-picture, and confirm the local service is reachable.",
-      "Use DSH Web to implement this task, open the exact active session in the Browser side panel, then verify the changes.",
-      "Use DSH Web to review this repository without modifying files, and open the exact active session in the Browser side panel."
+      "Open DSH Web in this Codex task's shared in-app Browser tab, not headless or Computer Use picture-in-picture, and confirm the local service is reachable.",
+      "Use DSH Web to implement this task, reuse the task-owned Browser tab for the exact active session, then verify the changes.",
+      "Use DSH Web to review this repository without modifying files, and reuse the task-owned Browser tab for the exact active session."
     ]
   }
 }

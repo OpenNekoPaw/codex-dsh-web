@@ -283,6 +283,18 @@ class DshClientTests(unittest.TestCase):
             ):
                 dsh_client.decode_wait_receipt(invalid)
 
+        ui_receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-2",
+            cursor=dsh_client.HistoryCursor(length=8, sequence=13),
+            ui_owner_id="thread-1",
+            ui_activity_id="activity-1",
+        )
+        self.assertEqual(
+            dsh_client.decode_wait_receipt(dsh_client.encode_wait_receipt(ui_receipt)),
+            ui_receipt,
+        )
+
     def test_task_creates_session_maps_intent_and_returns_answer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = dsh_client.run_task(
@@ -305,23 +317,35 @@ class DshClientTests(unittest.TestCase):
         self.assertTrue(result["title"].startswith("Codex: Inspect the repository"))
 
     def test_task_ui_returns_receipt_for_exact_session(self) -> None:
-        result = dsh_client.run_task(
-            self.client,
-            cwd=None,
-            session_id="session-1",
-            intent="write",
-            prompt="Implement the feature",
-            show_ui=True,
-            timeout=1,
-            startup_timeout=1,
-            poll_interval=0.01,
-        )
+        activity = dsh_client.UiActivityDecision("activity-1", 10, 1, True)
+        with mock.patch.object(
+            dsh_client, "acquire_ui_activity", return_value=activity
+        ), mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "thread-1"}, clear=False):
+            result = dsh_client.run_task(
+                self.client,
+                cwd=None,
+                session_id="session-1",
+                intent="write",
+                prompt="Implement the feature",
+                show_ui=True,
+                timeout=1,
+                startup_timeout=1,
+                poll_interval=0.01,
+            )
         self.assertEqual(result["status"], "dispatched")
         self.assertEqual(result["permission"], "workspace-write")
-        self.assertEqual(result["ui"]["url"], self.client.base_url)
+        self.assertEqual(
+            result["ui"]["url"],
+            f"{self.client.base_url}/?codexThreadId=thread-1",
+        )
         self.assertEqual(result["ui"]["title"], result["title"])
+        self.assertEqual(result["ui"]["ownerId"], "thread-1")
+        self.assertTrue(result["ui"]["reuse"])
+        self.assertEqual(result["ui"]["owners"], {"active": 1, "limit": 10})
         receipt = dsh_client.decode_wait_receipt(result["receipt"])
         self.assertEqual(receipt.session_id, "session-1")
+        self.assertEqual(receipt.ui_owner_id, "thread-1")
+        self.assertEqual(receipt.ui_activity_id, "activity-1")
         self.assertEqual(
             dsh_client.wait_for_turn(
                 self.client,
@@ -333,6 +357,100 @@ class DshClientTests(unittest.TestCase):
             ),
             "done",
         )
+
+    def test_task_ui_limit_rejects_before_prompting(self) -> None:
+        activity = dsh_client.UiActivityDecision(None, 10, 10, False)
+        with mock.patch.object(
+            dsh_client, "acquire_ui_activity", return_value=activity
+        ), mock.patch.object(
+            self.client, "prompt_with_rpc_id"
+        ) as prompt, mock.patch.dict(
+            os.environ, {"CODEX_THREAD_ID": "thread-5"}, clear=False
+        ):
+            with self.assertRaisesRegex(dsh_client.DshClientError, "owner limit reached"):
+                dsh_client.run_task(
+                    self.client,
+                    cwd=None,
+                    session_id="session-1",
+                    intent="write",
+                    prompt="Implement the feature",
+                    show_ui=True,
+                    timeout=1,
+                    startup_timeout=1,
+                    poll_interval=0.01,
+                )
+        prompt.assert_not_called()
+
+    def test_ui_mode_requires_a_stable_owner_id(self) -> None:
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"CODEX_THREAD_ID", "CODEX_SESSION_ID", "DSH_UI_OWNER_ID"}
+        }
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(dsh_client.DshClientError, "requires CODEX_THREAD_ID"):
+                dsh_client.codex_thread_id()
+
+    def test_ui_registry_defaults(self) -> None:
+        self.assertEqual(dsh_client.DEFAULT_UI_LIMIT, 10)
+        self.assertEqual(dsh_client.DEFAULT_UI_ACTIVITY_TTL, 2 * 3600.0)
+
+    def test_ui_activities_reuse_owner_and_close_after_final_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            dsh_client,
+            "ui_registry_paths",
+            return_value=(
+                Path(directory) / "owners.json",
+                Path(directory) / "owners.lock",
+            ),
+        ):
+            first = dsh_client.acquire_ui_activity(
+                "http://localhost:8765", "thread-1", "session-1", 1, 3600, 1000
+            )
+            second = dsh_client.acquire_ui_activity(
+                "http://localhost:9999", "thread-1", "session-2", 1, 3600, 1001
+            )
+            self.assertIsNotNone(first.activity_id)
+            self.assertFalse(first.reused)
+            self.assertEqual(first.active, 1)
+            self.assertIsNotNone(second.activity_id)
+            self.assertTrue(second.reused)
+            self.assertEqual(second.active, 1)
+
+            with mock.patch.object(dsh_client.time, "time", return_value=1002):
+                first_release = dsh_client.release_ui_activity(
+                    "thread-1", first.activity_id
+                )
+                final_release = dsh_client.release_ui_activity(
+                    "thread-1", second.activity_id
+                )
+            self.assertFalse(first_release.close_ui)
+            self.assertEqual(first_release.active, 1)
+            self.assertTrue(final_release.close_ui)
+            self.assertEqual(final_release.active, 0)
+
+    def test_ui_owner_limit_prunes_expired_activities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            dsh_client,
+            "ui_registry_paths",
+            return_value=(
+                Path(directory) / "owners.json",
+                Path(directory) / "owners.lock",
+            ),
+        ):
+            first = dsh_client.acquire_ui_activity(
+                self.client.base_url, "thread-1", "session-1", 1, 10, 1000
+            )
+            blocked = dsh_client.acquire_ui_activity(
+                self.client.base_url, "thread-2", "session-2", 1, 10, 1005
+            )
+            replacement = dsh_client.acquire_ui_activity(
+                self.client.base_url, "thread-2", "session-2", 1, 10, 1011
+            )
+            self.assertIsNotNone(first.activity_id)
+            self.assertIsNone(blocked.activity_id)
+            self.assertIsNotNone(replacement.activity_id)
+            self.assertEqual(replacement.active, 1)
 
     def test_task_starts_dsh_only_when_unavailable(self) -> None:
         client = mock.Mock(base_url="http://127.0.0.1:8765")
@@ -497,6 +615,118 @@ class DshClientTests(unittest.TestCase):
             {"status": "completed", "sessionId": "session-1", "answer": "later"},
         )
 
+    def test_wait_command_releases_ui_activity_on_success(self) -> None:
+        receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-1",
+            cursor=dsh_client.HistoryCursor(length=1, sequence=1),
+            ui_owner_id="thread-1",
+            ui_activity_id="activity-1",
+        )
+        release = dsh_client.UiReleaseDecision(True, 0)
+        with mock.patch.object(
+            dsh_client, "DshClient", return_value=mock.Mock()
+        ), mock.patch.object(
+            dsh_client, "wait_for_turn", return_value="later"
+        ), mock.patch.object(
+            dsh_client, "release_ui_activity", return_value=release
+        ) as release_activity, mock.patch.object(
+            sys,
+            "argv",
+            ["dsh_client.py", "wait", dsh_client.encode_wait_receipt(receipt)],
+        ), mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(dsh_client.main(), 0)
+        release_activity.assert_called_once_with("thread-1", "activity-1")
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "completed",
+                "sessionId": "session-1",
+                "answer": "later",
+                "ui": {
+                    "ownerId": "thread-1",
+                    "close": True,
+                    "activeTasks": 0,
+                },
+            },
+        )
+
+    def test_wait_command_reports_ui_cleanup_on_timeout(self) -> None:
+        receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-1",
+            cursor=dsh_client.HistoryCursor(length=1, sequence=1),
+            ui_owner_id="thread-1",
+            ui_activity_id="activity-1",
+        )
+        timeout = dsh_client.DshClientError("timeout after 1s")
+        release = dsh_client.UiReleaseDecision(True, 0)
+        with mock.patch.object(
+            dsh_client, "DshClient", return_value=mock.Mock()
+        ), mock.patch.object(
+            dsh_client, "wait_for_turn", side_effect=timeout
+        ), mock.patch.object(
+            dsh_client, "release_ui_activity", return_value=release
+        ) as release_activity, mock.patch.object(
+            sys,
+            "argv",
+            ["dsh_client.py", "wait", dsh_client.encode_wait_receipt(receipt)],
+        ), mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            with self.assertRaisesRegex(dsh_client.DshClientError, "timeout after 1s"):
+                dsh_client.main()
+        release_activity.assert_called_once_with("thread-1", "activity-1")
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "failed",
+                "sessionId": "session-1",
+                "error": "timeout after 1s",
+                "ui": {
+                    "ownerId": "thread-1",
+                    "close": True,
+                    "activeTasks": 0,
+                },
+            },
+        )
+
+    def test_release_command_does_not_wait_or_cancel_session(self) -> None:
+        receipt = dsh_client.WaitReceipt(
+            session_id="session-1",
+            rpc_id="rpc-1",
+            cursor=dsh_client.HistoryCursor(length=1, sequence=1),
+            ui_owner_id="thread-1",
+            ui_activity_id="activity-1",
+        )
+        fake_client = mock.Mock()
+        release = dsh_client.UiReleaseDecision(True, 0)
+        with mock.patch.object(
+            dsh_client, "DshClient", return_value=fake_client
+        ), mock.patch.object(
+            dsh_client, "release_ui_activity", return_value=release
+        ) as release_activity, mock.patch.object(
+            dsh_client, "wait_for_turn"
+        ) as wait_for_turn, mock.patch.object(
+            sys,
+            "argv",
+            ["dsh_client.py", "release", dsh_client.encode_wait_receipt(receipt)],
+        ), mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(dsh_client.main(), 0)
+        release_activity.assert_called_once_with("thread-1", "activity-1")
+        wait_for_turn.assert_not_called()
+        fake_client.cancel.assert_not_called()
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "released",
+                "sessionId": "session-1",
+                "ui": {
+                    "ownerId": "thread-1",
+                    "close": True,
+                    "activeTasks": 0,
+                },
+            },
+        )
+
     def test_connection_refused_is_classified_as_unavailable(self) -> None:
         client = dsh_client.DshClient("http://127.0.0.1:1", 1)
         error = dsh_client.urllib.error.URLError(ConnectionRefusedError("refused"))
@@ -644,7 +874,9 @@ class DshClientTests(unittest.TestCase):
             for action in parser._actions
             if isinstance(action, dsh_client.argparse._SubParsersAction)
         )
-        self.assertEqual(set(subparsers.choices), {"doctor", "task", "wait", "debug"})
+        self.assertEqual(
+            set(subparsers.choices), {"doctor", "task", "wait", "release", "debug"}
+        )
         with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(
             SystemExit
         ) as error:
@@ -678,6 +910,11 @@ class DshClientTests(unittest.TestCase):
         self.assertIn("Never use Computer Use", skill)
         self.assertIn("picture-in-picture", skill)
         self.assertIn("never rewrite `localhost` to `127.0.0.1`", skill)
+        self.assertIn("One Codex task may own at most one live DSH tab", skill)
+        self.assertIn("codexThreadId=<ui.ownerId>", skill)
+        self.assertIn("<python> <client> release <receipt>", skill)
+        self.assertIn("do not use `--no-ui`", skill)
+        self.assertIn("Do not mark it deliverable or handoff", skill)
 
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")

@@ -1,4 +1,4 @@
 interface:
   display_name: "DSH Web"
-  short_description: "Drive DSH Web sessions from Codex"
-  default_prompt: "Use $dsh-web for this task, open and select the exact active DSH session in the Codex in-app Browser side panel (never Computer Use picture-in-picture), then inspect and verify the result."
+  short_description: "Share one managed DSH Web UI per Codex task"
+  default_prompt: "Use $dsh-web for this task, reuse this Codex task's single DSH tab in the in-app Browser side panel (never headless or Computer Use picture-in-picture), select the exact active session, then inspect and verify the result."

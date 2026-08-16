@@ -14,7 +14,8 @@ Codex 通过 DSH Web 本地 API 发送任务，默认在内置 Browser 侧栏中
 - 为目标仓库创建或继续已有 session。
 - 自动选择并验证 DSH 权限。
 - 发送任务并等待匹配的回答。
-- 每次任务都会在 Codex Desktop Browser 侧栏中打开并选择准确的 session。
+- 每个 Codex 任务最多复用一个 DSH Browser 标签，并在其中切换多个 DSH session。
+- 最后一个 DSH UI 操作完成、超时或失败后自动释放共享标签。
 - 由 Codex 负责审查改动和运行测试。
 
 插件不会让 Codex 对每个请求都调用 DSH。只有用户提到 DSH Web、DeepSeek Harness Web，或显式使用 `$dsh-web` 时才会触发。
@@ -74,9 +75,11 @@ DSH 执行轨迹默认打开，无需额外说明 UI：
 使用 $dsh-web 实现这个功能。
 ```
 
-Codex 会先派发任务，再在 Browser 侧栏中打开 DSH Web，按唯一标题选择 session，验证可见会话，然后等待结果。这个步骤很重要，因为 DSH Web 根地址可能恢复之前打开的旧 session。
+Codex 会先派发任务，再复用当前 Codex 任务在 Browser 侧栏中的 DSH Web 标签，按唯一标题选择 session，验证可见会话，然后等待结果。同一 Codex 任务中的多个 DSH session 会在这个标签内切换，不再持续新增标签。
 
-插件不得使用 Computer Use 画中画或外部浏览器承载该界面。如果内置 Browser 侧栏不可用，Codex 应报告限制，而不是静默切换界面类型。
+UI 所有权以 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 为键，不以 DSH 服务地址或 DSH session ID 为键。客户端默认最多允许 10 个并发 Codex UI owner，并按 2 小时 TTL 清理遗留 activity。最后一个 activity 会通知 Codex 关闭共享标签；关闭 UI 不会取消 DSH session。
+
+插件不得使用 Computer Use 画中画、外部浏览器或 headless 回退承载该界面。如果内置 Browser 侧栏不可用，Codex 会先释放 UI 所有权并报告限制，而不是静默切换界面类型。
 
 默认界面地址为 `http://localhost:8765`。Browser URL 必须保留 `localhost`；部分 Codex 内置 Browser 环境访问等价的 `127.0.0.1` 时会卡住。托管的 DSH 进程仍只绑定 IPv4 回环地址。
 
@@ -133,18 +136,23 @@ skill 会先派发任务，再按返回的准确标题选择会话，而不是�
 
 如果 Browser 一直停留在加载状态，请确认地址使用 `localhost`，而不是 `127.0.0.1`。
 
+### DSH Browser 标签过多
+
+更新后的任务会复用带有自身 `codexThreadId` 查询参数的标签，并关闭同一 owner 下的重复标签。只要当前任务还有 DSH UI activity，临时标签就会保留；最后一次 `wait` 或兜底 `release` 后再关闭，任务中断结束时 Browser 也可以自动回收。旧插件版本遗留的标签需要一次性手动关闭或重启 Codex。
+
 ### session 已在运行
 
 等待该 session 完成，或使用新 session。客户端会阻止两个本地调用者同时把同一个 DSH session 当作自己的活动任务。
 
 ## 开发
 
-客户端的正常使用界面有意保持为四个命令：
+客户端的正常使用界面有意保持为五个命令：
 
 ```text
 doctor
 task
 wait
+release
 debug
 ```
 

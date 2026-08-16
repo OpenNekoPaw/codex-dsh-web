@@ -32,6 +32,8 @@ DSH_PACKAGE = "@deepseek-ai/dsh"
 DSH_INSTALL_COMMAND = f"npm install --global {DSH_PACKAGE}"
 DSH_PROJECT_URL = "https://github.com/deepseek-ai/deepseek-harness"
 DEFAULT_STARTUP_TIMEOUT = 20.0
+DEFAULT_UI_LIMIT = 10
+DEFAULT_UI_ACTIVITY_TTL = 2 * 3600.0
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 PERMISSION_PRESETS = ("read-only", "workspace-write", "danger-full-access")
 INTENT_PERMISSIONS = {
@@ -75,6 +77,22 @@ class WaitReceipt:
     session_id: str
     rpc_id: str
     cursor: HistoryCursor
+    ui_owner_id: Optional[str] = None
+    ui_activity_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class UiActivityDecision:
+    activity_id: Optional[str]
+    limit: int
+    active: int
+    reused: bool
+
+
+@dataclass(frozen=True)
+class UiReleaseDecision:
+    close_ui: bool
+    active: int
 
 
 def env_float(name: str, default: float) -> float:
@@ -87,6 +105,19 @@ def env_float(name: str, default: float) -> float:
         raise DshClientError(f"{name} must be a number, got {raw_value!r}") from error
     if not math.isfinite(value) or value <= 0:
         raise DshClientError(f"{name} must be a finite number greater than zero")
+    return value
+
+
+def env_nonnegative_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise DshClientError(f"{name} must be a non-negative integer") from error
+    if value < 0:
+        raise DshClientError(f"{name} must be a non-negative integer")
     return value
 
 
@@ -781,6 +812,177 @@ def session_lock(base_url: str, session_id: str) -> Iterator[None]:
             lock_file.close()
 
 
+def ui_registry_paths() -> Tuple[Path, Path]:
+    registry_root = Path(tempfile.gettempdir()) / "codex-dsh-web-ui"
+    registry_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return registry_root / "owners.json", registry_root / "owners.lock"
+
+
+@contextmanager
+def ui_registry_lock() -> Iterator[Path]:
+    state_path, lock_path = ui_registry_paths()
+    lock_file = lock_path.open("a+b")
+    acquired = False
+    deadline = time.monotonic() + 5
+    try:
+        while True:
+            try:
+                lock_session_file(lock_file)
+                acquired = True
+                break
+            except OSError as error:
+                if time.monotonic() >= deadline:
+                    raise DshClientError("timed out updating the DSH UI registry") from error
+                time.sleep(0.05)
+        yield state_path
+    finally:
+        try:
+            if acquired:
+                unlock_session_file(lock_file)
+        finally:
+            lock_file.close()
+
+
+def read_ui_owners(state_path: Path, now: float) -> dict[str, dict[str, Any]]:
+    try:
+        value = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    owners = value.get("owners")
+    if not isinstance(owners, dict):
+        return {}
+    active_owners: dict[str, dict[str, Any]] = {}
+    for owner_id, owner in owners.items():
+        if not isinstance(owner_id, str) or not isinstance(owner, dict):
+            continue
+        raw_activities = owner.get("activities")
+        if not isinstance(raw_activities, dict):
+            continue
+        owner_expiry = owner.get("expiresAt")
+        activities: dict[str, dict[str, Any]] = {}
+        for activity_id, activity in raw_activities.items():
+            if not isinstance(activity_id, str) or not isinstance(activity, dict):
+                continue
+            expires_at = activity.get("expiresAt", owner_expiry)
+            if isinstance(expires_at, (int, float)) and expires_at > now:
+                activities[activity_id] = {**activity, "expiresAt": expires_at}
+        if not activities:
+            continue
+        expires_at = max(activity["expiresAt"] for activity in activities.values())
+        active_owners[owner_id] = {
+            "activities": activities,
+            "updatedAt": owner.get("updatedAt", now),
+            "expiresAt": expires_at,
+        }
+    return active_owners
+
+
+def write_ui_owners(
+    state_path: Path, owners: dict[str, dict[str, Any]]
+) -> None:
+    temporary_path = state_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps({"version": 1, "owners": owners}, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temporary_path.replace(state_path)
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def codex_thread_id() -> str:
+    for name in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "DSH_UI_OWNER_ID"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    raise DshClientError(
+        "UI mode requires CODEX_THREAD_ID or CODEX_SESSION_ID; "
+        "set DSH_UI_OWNER_ID only for an explicit non-Codex caller"
+    )
+
+
+def thread_ui_url(base_url: str, owner_id: str) -> str:
+    parsed = urllib.parse.urlsplit(base_url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query = [(key, value) for key, value in query if key != "codexThreadId"]
+    query.append(("codexThreadId", owner_id))
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path or "/", urllib.parse.urlencode(query), "")
+    )
+
+
+def acquire_ui_activity(
+    base_url: str,
+    owner_id: str,
+    session_id: str,
+    limit: int,
+    ttl: float,
+    now: float,
+) -> UiActivityDecision:
+    with ui_registry_lock() as state_path:
+        owners = read_ui_owners(state_path, now)
+        reused = owner_id in owners
+        if not reused and len(owners) >= limit:
+            write_ui_owners(state_path, owners)
+            return UiActivityDecision(None, limit, len(owners), False)
+        activity_id = uuid.uuid4().hex
+        owner = owners.get(owner_id, {"activities": {}})
+        activities = owner["activities"]
+        expires_at = now + ttl
+        activities[activity_id] = {
+            "baseUrl": base_url,
+            "sessionId": session_id,
+            "startedAt": now,
+            "expiresAt": expires_at,
+        }
+        owners[owner_id] = {
+            "activities": activities,
+            "updatedAt": now,
+            "expiresAt": max(
+                activity["expiresAt"] for activity in activities.values()
+            ),
+        }
+        write_ui_owners(state_path, owners)
+        return UiActivityDecision(activity_id, limit, len(owners), reused)
+
+
+def release_ui_activity(
+    owner_id: Optional[str],
+    activity_id: Optional[str],
+) -> UiReleaseDecision:
+    if owner_id is None or activity_id is None:
+        return UiReleaseDecision(False, 0)
+    now = time.time()
+    with ui_registry_lock() as state_path:
+        owners = read_ui_owners(state_path, now)
+        owner = owners.get(owner_id)
+        if owner is None:
+            write_ui_owners(state_path, owners)
+            return UiReleaseDecision(True, 0)
+        activities = owner["activities"]
+        activities.pop(activity_id, None)
+        if activities:
+            owner["updatedAt"] = now
+            owner["expiresAt"] = max(
+                activity["expiresAt"] for activity in activities.values()
+            )
+            owners[owner_id] = owner
+            close_ui = False
+        else:
+            owners.pop(owner_id, None)
+            close_ui = True
+        write_ui_owners(state_path, owners)
+        return UiReleaseDecision(close_ui, len(activities))
+
+
 def lock_session_file(lock_file: Any) -> None:
     if os.name == "nt":
         import msvcrt
@@ -834,7 +1036,12 @@ def run_prompt(
 
 
 def dispatch_prompt(
-    client: DshClient, session_id: str, text: str, mode: str
+    client: DshClient,
+    session_id: str,
+    text: str,
+    mode: str,
+    ui_owner_id: Optional[str] = None,
+    ui_activity_id: Optional[str] = None,
 ) -> WaitReceipt:
     with session_lock(client.base_url, session_id):
         ensure_session_idle(client, session_id)
@@ -844,17 +1051,24 @@ def dispatch_prompt(
             session_id=session_id,
             rpc_id=response.rpc_id,
             cursor=cursor,
+            ui_owner_id=ui_owner_id,
+            ui_activity_id=ui_activity_id,
         )
 
 
 def encode_wait_receipt(receipt: WaitReceipt) -> str:
+    if (receipt.ui_owner_id is None) != (receipt.ui_activity_id is None):
+        raise DshClientError("wait receipt UI owner and activity must be paired")
     payload = {
-        "v": 1,
+        "v": 2 if receipt.ui_activity_id is not None else 1,
         "session": receipt.session_id,
         "rpc": receipt.rpc_id,
         "count": receipt.cursor.length,
         "seq": receipt.cursor.sequence,
     }
+    if receipt.ui_activity_id is not None:
+        payload["owner"] = receipt.ui_owner_id
+        payload["ui"] = receipt.ui_activity_id
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -870,12 +1084,15 @@ def decode_wait_receipt(value: str) -> WaitReceipt:
         payload = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise DshClientError("invalid wait receipt") from error
-    if not isinstance(payload, dict) or payload.get("v") != 1:
+    if not isinstance(payload, dict) or payload.get("v") not in {1, 2}:
         raise DshClientError("invalid wait receipt")
+    version = payload["v"]
     session_id = payload.get("session")
     rpc_id = payload.get("rpc")
     count = payload.get("count")
     sequence = payload.get("seq")
+    ui_owner_id = payload.get("owner")
+    ui_activity_id = payload.get("ui")
     if (
         not isinstance(session_id, str)
         or not session_id
@@ -888,12 +1105,25 @@ def decode_wait_receipt(value: str) -> WaitReceipt:
             sequence is not None
             and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0)
         )
+        or (
+            ui_owner_id is not None
+            and (not isinstance(ui_owner_id, str) or not ui_owner_id)
+        )
+        or (
+            ui_activity_id is not None
+            and (not isinstance(ui_activity_id, str) or not ui_activity_id)
+        )
+        or ((ui_owner_id is None) != (ui_activity_id is None))
+        or (version == 1 and ui_owner_id is not None)
+        or (version == 2 and ui_owner_id is None)
     ):
         raise DshClientError("invalid wait receipt")
     return WaitReceipt(
         session_id=session_id,
         rpc_id=rpc_id,
         cursor=HistoryCursor(length=count, sequence=sequence),
+        ui_owner_id=ui_owner_id,
+        ui_activity_id=ui_activity_id,
     )
 
 
@@ -951,11 +1181,43 @@ def run_task(
         "title": title,
     }
     if show_ui:
-        dispatch = dispatch_prompt(client, session_id, prompt, "queue")
+        ui_limit = env_nonnegative_int("DSH_UI_LIMIT", DEFAULT_UI_LIMIT)
+        owner_id = codex_thread_id()
+        activity = acquire_ui_activity(
+            client.base_url,
+            owner_id,
+            session_id,
+            ui_limit,
+            env_float("DSH_UI_ACTIVITY_TTL", DEFAULT_UI_ACTIVITY_TTL),
+            time.time(),
+        )
+        if activity.activity_id is None:
+            raise DshClientError(
+                f"DSH Web UI owner limit reached ({activity.active}/{activity.limit}); "
+                "wait for another Codex task to release its shared DSH UI"
+            )
+        try:
+            dispatch = dispatch_prompt(
+                client,
+                session_id,
+                prompt,
+                "queue",
+                ui_owner_id=owner_id,
+                ui_activity_id=activity.activity_id,
+            )
+        except BaseException:
+            release_ui_activity(owner_id, activity.activity_id)
+            raise
         output.update(
             {
                 "status": "dispatched",
-                "ui": {"url": client.base_url, "title": title},
+                "ui": {
+                    "url": thread_ui_url(client.base_url, owner_id),
+                    "title": title,
+                    "ownerId": owner_id,
+                    "reuse": activity.reused,
+                    "owners": {"active": activity.active, "limit": activity.limit},
+                },
                 "receipt": encode_wait_receipt(dispatch),
             }
         )
@@ -1067,6 +1329,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wait_parser.add_argument("receipt")
 
+    release_parser = subparsers.add_parser(
+        "release", help="release UI ownership without cancelling the DSH session"
+    )
+    release_parser.add_argument("receipt")
+
     debug_parser = subparsers.add_parser(
         "debug", help="low-level service and session diagnostics"
     )
@@ -1125,20 +1392,61 @@ def main() -> int:
         )
     elif args.command == "wait":
         receipt = decode_wait_receipt(args.receipt)
-        answer = wait_for_turn(
-            client,
-            receipt.session_id,
-            receipt.cursor,
-            args.timeout,
-            args.poll_interval,
-            prompt_rpc_id=receipt.rpc_id,
+        owner_id = receipt.ui_owner_id
+        release = UiReleaseDecision(False, 0)
+        wait_error: Optional[BaseException] = None
+        answer: Optional[str] = None
+        try:
+            answer = wait_for_turn(
+                client,
+                receipt.session_id,
+                receipt.cursor,
+                args.timeout,
+                args.poll_interval,
+                prompt_rpc_id=receipt.rpc_id,
+            )
+        except BaseException as error:
+            wait_error = error
+        finally:
+            release = release_ui_activity(
+                owner_id,
+                receipt.ui_activity_id,
+            )
+        output: dict[str, Any] = {
+            "status": "completed" if wait_error is None else "failed",
+            "sessionId": receipt.session_id,
+        }
+        if wait_error is None:
+            output["answer"] = answer
+        else:
+            output["error"] = (
+                "interrupted" if isinstance(wait_error, KeyboardInterrupt) else str(wait_error)
+            )
+        if receipt.ui_activity_id is not None:
+            output["ui"] = {
+                "ownerId": owner_id,
+                "close": release.close_ui,
+                "activeTasks": release.active,
+            }
+        print(json.dumps(output, ensure_ascii=False))
+        if wait_error is not None:
+            raise wait_error
+    elif args.command == "release":
+        receipt = decode_wait_receipt(args.receipt)
+        release = release_ui_activity(
+            receipt.ui_owner_id,
+            receipt.ui_activity_id,
         )
         print(
             json.dumps(
                 {
-                    "status": "completed",
+                    "status": "released",
                     "sessionId": receipt.session_id,
-                    "answer": answer,
+                    "ui": {
+                        "ownerId": receipt.ui_owner_id,
+                        "close": release.close_ui,
+                        "activeTasks": release.active,
+                    },
                 },
                 ensure_ascii=False,
             )

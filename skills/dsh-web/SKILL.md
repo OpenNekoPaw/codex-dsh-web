@@ -5,7 +5,7 @@ description: Delegate a development task to a local DSH Web session, always open
 
 # DSH Web
 
-Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Always show the exact task session in the Codex in-app Browser side panel. Codex remains responsible for inspecting files and running validation.
+Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, correlated waiting, and logical UI ownership. Always show the exact task session in one shared Codex in-app Browser tab. Codex remains responsible for inspecting files and running validation.
 
 ## Locate the client
 
@@ -61,7 +61,7 @@ Use one session sequentially. Create separate sessions for genuinely parallel wo
 
 ## Open the exact active session
 
-Use UI-first behavior for every delegated task, even when the user does not separately ask to see the interface. Always pass `--ui`. Use `--no-ui` only when the user explicitly requests no WebView.
+Use UI mode for every delegated task, even when the user does not separately ask to see the interface. Always pass `--ui`; do not use `--no-ui` in this skill and never fall back to a headless browser or external browser.
 
 ```text
 <python> <client> task \
@@ -75,15 +75,35 @@ A dispatched result contains:
 
 - `ui.url`: the DSH Web address.
 - `ui.title`: the exact session title.
+- `ui.ownerId`: the current Codex task ID from `CODEX_THREAD_ID` or `CODEX_SESSION_ID`.
+- `ui.reuse`: whether that Codex task already has registered DSH UI activity.
 - `receipt`: an opaque value used by `wait`.
 
-Immediately use the available in-app Browser control skill to open `ui.url` in Codex's side-panel WebView. Explicitly select the in-app Browser surface; do not let URL-based browser selection choose another surface. Do not merely print the URL or return a link.
+Immediately use the available in-app Browser control skill and explicitly select the in-app Browser surface. Do not let URL-based browser selection choose another surface. Do not merely print the URL or return a link.
 
 Open `ui.url` exactly as returned. The default is `http://localhost:8765`; never rewrite `localhost` to `127.0.0.1`, because the in-app Browser can stall on the numeric loopback address.
 
+## Reuse one task-owned tab
+
+Treat `ui.ownerId`, not the DSH service URL or DSH session ID, as the UI owner. One Codex task may own at most one live DSH tab, and that tab may switch among multiple DSH sessions.
+
+The registry defaults to 10 concurrent Codex UI owners and a two-hour activity TTL. `DSH_UI_LIMIT` and `DSH_UI_ACTIVITY_TTL` may override those values.
+
+Before opening a tab:
+
+1. Reuse the live DSH tab binding already held for `ui.ownerId` when available.
+2. Otherwise inspect this task's in-app Browser tabs and recover the one whose URL contains the returned `codexThreadId=<ui.ownerId>` query value.
+3. If more than one matching tab exists for the same owner, keep one and close the duplicates with the Browser's documented tab-close operation.
+4. Create a tab only when no live matching tab exists, regardless of the value of `ui.reuse`.
+5. Never close or reuse a DSH tab whose `codexThreadId` belongs to another Codex task.
+
+Navigate the retained tab to `ui.url` when its current address differs. A later DSH task or session in the same Codex task must switch this tab instead of creating another one.
+
+Keep the DSH tab temporary. Do not mark it deliverable or handoff unless the user explicitly asks to keep that UI open. This lets the Browser reclaim an agent-created tab automatically if the Codex turn ends or is interrupted before explicit cleanup.
+
 DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match. Do not continue while an old session or the new-session page is selected.
 
-Never use Computer Use, `@Computer`, an external browser, or picture-in-picture to open or control the DSH UI. If the in-app Browser skill or side panel is unavailable, report that exact limitation instead of substituting another surface. API prompting and result collection may continue, but do not claim that the UI was opened.
+Never use Computer Use, `@Computer`, an external browser, a headless browser, or picture-in-picture to open or control the DSH UI. If the in-app Browser skill or side panel is unavailable after dispatch, run the fallback `release` cleanup, report that exact limitation, and do not substitute another surface or claim that the UI was opened.
 
 Only after the exact session is visibly selected, wait for the result:
 
@@ -91,9 +111,20 @@ Only after the exact session is visibly selected, wait for the result:
 <python> <client> wait <receipt>
 ```
 
-Do not decode or edit the receipt.
+Do not decode or edit the receipt. Read the JSON printed by `wait` even when the command exits nonzero. It always releases that activity and reports `ui.close` for current receipts:
 
-If the user only asks to open DSH Web without delegating a task, run `doctor`. If the server is not reachable but DSH is installed, run `debug start`, then open the reported URL in the in-app Browser side panel under the same no-Computer-Use rule.
+- If `ui.close` is `false`, other DSH activities in this Codex task still need the shared tab; keep it open.
+- If `ui.close` is `true`, close the retained DSH tab. Closing the tab must not cancel or delete any DSH session.
+
+Run the task, Browser selection, and wait inside a cleanup-aware flow. If `wait` was not reached or did not return a cleanup result because UI setup or orchestration failed, run:
+
+```text
+<python> <client> release <receipt>
+```
+
+Then apply its `ui.close` result using the same rule. `release` is idempotent, does not wait for the DSH turn, and does not cancel the DSH session. Use it only as the fallback cleanup path; normal completion and timeout cleanup belong to `wait`.
+
+If the user only asks to open DSH Web without delegating a task, run `doctor`. If the server is not reachable but DSH is installed, run `debug start`, then open the reported URL in the in-app Browser side panel under the same single-tab and no-Computer-Use rules.
 
 ## Verify independently
 

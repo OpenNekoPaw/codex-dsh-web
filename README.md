@@ -14,7 +14,8 @@ Codex sends the task through DSH Web's local API, opens the exact active session
 - Creates or continues a session for the target repository.
 - Chooses and verifies the DSH permission automatically.
 - Sends a task and waits for the matching answer.
-- Opens and selects the exact session in Codex Desktop's Browser side panel for every task.
+- Reuses at most one DSH Browser tab per Codex task and switches that tab among DSH sessions.
+- Releases the shared tab after the task's last active DSH UI operation completes, times out, or fails.
 - Keeps Codex responsible for reviewing changes and running tests.
 
 The plugin does not make Codex call DSH for every request. It activates when you mention DSH Web, DeepSeek Harness Web, or explicitly use `$dsh-web`.
@@ -74,9 +75,11 @@ The live DSH trace opens by default; no extra UI instruction is required:
 Use $dsh-web to implement this feature.
 ```
 
-Codex dispatches the task, opens DSH Web in the Browser side panel, selects the session by its unique title, verifies the visible conversation, and then waits for the result. This matters because DSH Web's root URL may otherwise restore an older session.
+Codex dispatches the task, reuses this Codex task's DSH Web tab in the Browser side panel, selects the session by its unique title, verifies the visible conversation, and then waits for the result. Multiple DSH sessions in the same Codex task switch inside that tab instead of opening more tabs.
 
-The plugin must not use Computer Use picture-in-picture or an external browser for this UI. If the in-app Browser side panel is unavailable, Codex reports that limitation instead of silently switching surfaces.
+UI ownership is keyed by `CODEX_THREAD_ID` or `CODEX_SESSION_ID`, not by the DSH service URL or DSH session ID. The client limits concurrent Codex UI owners to 10 by default and prunes abandoned activity after a two-hour TTL. The final activity tells Codex to close the shared tab; closing UI never cancels a DSH session.
+
+The plugin must not use Computer Use picture-in-picture, an external browser, or a headless fallback for this UI. If the in-app Browser side panel is unavailable, Codex releases its UI ownership and reports that limitation instead of silently switching surfaces.
 
 The default UI address is `http://localhost:8765`. Keep `localhost` in the Browser URL; some Codex in-app Browser environments stall on the equivalent `127.0.0.1` address. The managed DSH process still binds only to IPv4 loopback.
 
@@ -133,6 +136,10 @@ If DSH appears in Computer Use picture-in-picture, the wrong browser surface was
 
 If the Browser remains on a loading state, confirm its address uses `localhost` rather than `127.0.0.1`.
 
+### Too many DSH Browser tabs
+
+An updated task reuses the tab carrying its own `codexThreadId` query value and closes duplicates for that same owner. It keeps the tab temporary while any DSH UI activity in the task remains active, then closes it after the final `wait` or fallback `release`; the Browser can also reclaim it when an interrupted turn ends. Tabs left by older plugin versions require one-time manual closure or an app restart.
+
 ### A session is already running
 
 Wait for that session to finish or use a new session. The client prevents two local callers from treating the same DSH session as their own active turn.
@@ -145,6 +152,7 @@ The normal client surface is intentionally small:
 doctor
 task
 wait
+release
 debug
 ```
 
