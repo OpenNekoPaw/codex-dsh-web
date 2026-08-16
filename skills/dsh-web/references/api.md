@@ -12,7 +12,7 @@ On Windows, `py -3` can replace `python3`.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `--url` | `DSH_URL` or `http://127.0.0.1:8765` | DSH Web base URL |
+| `--url` | `DSH_URL` or `http://localhost:8765` | DSH Web base URL |
 | `--http-timeout` | 30 seconds | Per-request timeout |
 | `--timeout` | 600 seconds | Task completion timeout |
 | `--poll-interval` | 2 seconds | History polling interval |
@@ -79,7 +79,7 @@ UI mode is the default; `--ui` makes the intent explicit. The command dispatches
   "permission": "workspace-write",
   "title": "Codex: Implement the feature [a65d-ed81]",
   "ui": {
-    "url": "http://127.0.0.1:8765",
+    "url": "http://localhost:8765",
     "title": "Codex: Implement the feature [a65d-ed81]"
   },
   "receipt": "opaque-value"
@@ -87,6 +87,8 @@ UI mode is the default; `--ui` makes the intent explicit. The command dispatches
 ```
 
 Codex must open `ui.url` in the in-app Browser side panel, never Computer Use picture-in-picture or an external browser. After Codex selects the exact title in that DSH Web UI:
+
+Use the returned `localhost` URL verbatim. Do not normalize it to `127.0.0.1`. Automatic startup still binds the managed DSH process to IPv4 loopback.
 
 ```text
 python3 dsh_client.py wait <receipt>

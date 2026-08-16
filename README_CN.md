@@ -76,6 +76,8 @@ Codex 会先派发任务，再在 Browser 侧栏中打开 DSH Web，按唯一标
 
 插件不得使用 Computer Use 画中画或外部浏览器承载该界面。如果内置 Browser 侧栏不可用，Codex 应报告限制，而不是静默切换界面类型。
 
+默认界面地址为 `http://localhost:8765`。Browser URL 必须保留 `localhost`；部分 Codex 内置 Browser 环境访问等价的 `127.0.0.1` 时会卡住。托管的 DSH 进程仍只绑定 IPv4 回环地址。
+
 如果项目希望始终优先委派给 DSH，可以在 `AGENTS.md` 添加简短规则：
 
 ```markdown
@@ -126,6 +128,8 @@ python3 /插件路径/skills/dsh-web/scripts/dsh_client.py doctor
 skill 会先派发任务，再按返回的准确标题选择会话，而不是依赖根页面保存的旧状态。如果仍显示旧 session，应将其视为会话切换失败。
 
 如果 DSH 出现在 Computer Use 画中画中，说明选择了错误的浏览器界面。请在更新插件后新建任务；新版 skill 强制使用内置 Browser 侧栏并禁止该回退。
+
+如果 Browser 一直停留在加载状态，请确认地址使用 `localhost`，而不是 `127.0.0.1`。
 
 ### session 已在运行
 

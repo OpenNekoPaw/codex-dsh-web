@@ -79,6 +79,8 @@ A dispatched result contains:
 
 Immediately use the available in-app Browser control skill to open `ui.url` in Codex's side-panel WebView. Explicitly select the in-app Browser surface; do not let URL-based browser selection choose another surface. Do not merely print the URL or return a link.
 
+Open `ui.url` exactly as returned. The default is `http://localhost:8765`; never rewrite `localhost` to `127.0.0.1`, because the in-app Browser can stall on the numeric loopback address.
+
 DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match. Do not continue while an old session or the new-session page is selected.
 
 Never use Computer Use, `@Computer`, an external browser, or picture-in-picture to open or control the DSH UI. If the in-app Browser skill or side panel is unavailable, report that exact limitation instead of substituting another surface. API prompting and result collection may continue, but do not claim that the UI was opened.

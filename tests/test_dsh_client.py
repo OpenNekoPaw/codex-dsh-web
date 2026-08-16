@@ -517,9 +517,14 @@ class DshClientTests(unittest.TestCase):
         proxied_open.assert_not_called()
 
     def test_local_web_target_accepts_loopback_only(self) -> None:
+        self.assertEqual(dsh_client.DEFAULT_URL, "http://localhost:8765")
         self.assertEqual(
             dsh_client.local_web_target("http://localhost:8765"),
             ("localhost", 8765),
+        )
+        self.assertEqual(
+            dsh_client.local_bind_host("http://localhost:8765"),
+            "127.0.0.1",
         )
         self.assertEqual(
             dsh_client.local_web_target("http://[::1]:9000/"),
@@ -560,7 +565,7 @@ class DshClientTests(unittest.TestCase):
         launch.assert_not_called()
 
     def test_start_launches_and_waits_for_health(self) -> None:
-        client = mock.Mock(base_url="http://127.0.0.1:8765")
+        client = mock.Mock(base_url="http://localhost:8765")
         client.health.side_effect = [dsh_client.DshUnavailableError("refused"), None]
         process = mock.Mock(pid=1234)
         process.poll.return_value = None
@@ -672,6 +677,7 @@ class DshClientTests(unittest.TestCase):
         self.assertIn("in-app Browser side panel", skill)
         self.assertIn("Never use Computer Use", skill)
         self.assertIn("picture-in-picture", skill)
+        self.assertIn("never rewrite `localhost` to `127.0.0.1`", skill)
 
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")

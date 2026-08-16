@@ -76,6 +76,8 @@ Codex dispatches the task, opens DSH Web in the Browser side panel, selects the 
 
 The plugin must not use Computer Use picture-in-picture or an external browser for this UI. If the in-app Browser side panel is unavailable, Codex reports that limitation instead of silently switching surfaces.
 
+The default UI address is `http://localhost:8765`. Keep `localhost` in the Browser URL; some Codex in-app Browser environments stall on the equivalent `127.0.0.1` address. The managed DSH process still binds only to IPv4 loopback.
+
 For teams that always want DSH delegation, add a short project instruction to `AGENTS.md`:
 
 ```markdown
@@ -126,6 +128,8 @@ It reports Python, npm, DSH, and server readiness, including the DSH install com
 The skill dispatches the task first, then selects the exact returned title instead of relying on the root page's remembered state. If an old session remains visible, report it as a session-selection failure.
 
 If DSH appears in Computer Use picture-in-picture, the wrong browser surface was selected. Start a new task with the updated plugin; the skill requires the in-app Browser side panel and forbids that fallback.
+
+If the Browser remains on a loading state, confirm its address uses `localhost` rather than `127.0.0.1`.
 
 ### A session is already running
 

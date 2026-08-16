@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator, NoReturn, Optional, Tuple, Union
 
 
-DEFAULT_URL = "http://127.0.0.1:8765"
+DEFAULT_URL = "http://localhost:8765"
 MIN_PYTHON = (3, 9)
 DSH_PACKAGE = "@deepseek-ai/dsh"
 DSH_INSTALL_COMMAND = f"npm install --global {DSH_PACKAGE}"
@@ -169,6 +169,11 @@ def local_web_target(base_url: str) -> Tuple[str, int]:
     return parsed.hostname, port or 80
 
 
+def local_bind_host(base_url: str) -> str:
+    hostname, _ = local_web_target(base_url)
+    return "127.0.0.1" if hostname == "localhost" else hostname
+
+
 def server_log_path(base_url: str) -> Path:
     _, port = local_web_target(base_url)
     return Path(tempfile.gettempdir()) / f"dsh-web-{port}.log"
@@ -267,7 +272,8 @@ def start_dsh_server(
     log_path = server_log_path(client.base_url)
     executable = require_dsh_executable()
     dsh_version(executable)
-    host, port = local_web_target(client.base_url)
+    _, port = local_web_target(client.base_url)
+    host = local_bind_host(client.base_url)
     runtime_path = server_runtime_path(client.base_url)
     process = launch_dsh(executable, host, port, log_path, runtime_path)
     deadline = time.monotonic() + startup_timeout
