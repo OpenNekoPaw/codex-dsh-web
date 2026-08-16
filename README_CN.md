@@ -4,7 +4,7 @@
 
 `codex-dsh-web` 是一个轻量的 Codex 插件，用于把开发任务委派给本地 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web 会话。
 
-Codex 通过 DSH Web 本地 API 发送任务，可在内置 Browser 中展示准确的活动会话，随后由 Codex 自己检查文件并运行验证。
+Codex 通过 DSH Web 本地 API 发送任务，默认在内置 Browser 中打开准确的活动会话，随后由 Codex 自己检查文件并运行验证。
 
 ## 功能
 
@@ -12,7 +12,7 @@ Codex 通过 DSH Web 本地 API 发送任务，可在内置 Browser 中展示准
 - 为目标仓库创建或继续已有 session。
 - 自动选择并验证 DSH 权限。
 - 发送任务并等待匹配的回答。
-- 可在 Codex Desktop Browser 中选择准确的活动 session。
+- 每次任务都会在 Codex Desktop Browser 中打开并选择准确的 session。
 - 由 Codex 负责审查改动和运行测试。
 
 插件不会让 Codex 对每个请求都调用 DSH。只有用户提到 DSH Web、DeepSeek Harness Web，或显式使用 `$dsh-web` 时才会触发。
@@ -66,13 +66,13 @@ codex plugin list
 让 DSH Web 只读评审当前仓库。
 ```
 
-需要持续查看 DSH 执行轨迹时：
+DSH 执行轨迹默认打开，无需额外说明 UI：
 
 ```text
-使用 $dsh-web 实现这个功能，并在内置浏览器中展示当前 DSH 会话。
+使用 $dsh-web 实现这个功能。
 ```
 
-Codex 会打开 DSH Web，按唯一标题选择 session，并验证可见会话。这个步骤很重要，因为 DSH Web 根地址可能恢复之前打开的旧 session。
+Codex 会先派发任务，再打开 DSH Web，按唯一标题选择 session，验证可见会话，然后等待结果。这个步骤很重要，因为 DSH Web 根地址可能恢复之前打开的旧 session。
 
 如果项目希望始终优先委派给 DSH，可以在 `AGENTS.md` 添加简短规则：
 
@@ -121,7 +121,7 @@ python3 /插件路径/skills/dsh-web/scripts/dsh_client.py doctor
 
 ### Browser 展示旧 session
 
-要求 Codex 展示当前活动 DSH session。skill 会先派发任务，再按返回的准确标题选择会话，而不是依赖根页面保存的旧状态。
+skill 会先派发任务，再按返回的准确标题选择会话，而不是依赖根页面保存的旧状态。如果仍显示旧 session，应将其视为会话切换失败。
 
 ### session 已在运行
 

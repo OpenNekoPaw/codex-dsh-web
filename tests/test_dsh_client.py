@@ -646,6 +646,26 @@ class DshClientTests(unittest.TestCase):
             parser.parse_args(["task", "--intent", "write", "--prompt", "work"])
         self.assertEqual(error.exception.code, 2)
 
+    def test_task_uses_ui_by_default_and_allows_explicit_opt_out(self) -> None:
+        parser = dsh_client.build_parser()
+        default_args = parser.parse_args(
+            ["task", "--cwd", "/repo", "--intent", "read", "--prompt", "inspect"]
+        )
+        headless_args = parser.parse_args(
+            [
+                "task",
+                "--cwd",
+                "/repo",
+                "--intent",
+                "read",
+                "--prompt",
+                "inspect",
+                "--no-ui",
+            ]
+        )
+        self.assertTrue(default_args.ui)
+        self.assertFalse(headless_args.ui)
+
     def test_start_does_not_launch_for_an_unavailable_remote_url(self) -> None:
         client = mock.Mock(base_url="http://dsh.example.test:8765")
         client.health.side_effect = dsh_client.DshUnavailableError("refused")

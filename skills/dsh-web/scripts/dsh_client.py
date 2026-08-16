@@ -1041,10 +1041,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="read, write, or explicitly requested full access",
     )
     task_parser.add_argument("--prompt", required=True)
-    task_parser.add_argument(
+    ui_mode = task_parser.add_mutually_exclusive_group()
+    ui_mode.add_argument(
         "--ui",
+        dest="ui",
         action="store_true",
-        help="dispatch immediately so Codex can select the session in DSH Web",
+        default=True,
+        help="dispatch so Codex can select the session in DSH Web (default)",
+    )
+    ui_mode.add_argument(
+        "--no-ui",
+        dest="ui",
+        action="store_false",
+        help="wait without opening the DSH Web session",
     )
 
     wait_parser = subparsers.add_parser(

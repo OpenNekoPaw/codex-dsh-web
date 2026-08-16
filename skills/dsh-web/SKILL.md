@@ -1,11 +1,11 @@
 ---
 name: dsh-web
-description: Delegate a development task to a local DSH Web session, optionally show the exact active session in Codex Desktop, then let Codex inspect and verify the result. Use when the user asks to use, open, call, or collaborate with DSH Web or DeepSeek Harness Web.
+description: Delegate a development task to a local DSH Web session, always open and select the exact active session in Codex Desktop, then let Codex inspect and verify the result. Use when the user asks to use, open, call, or collaborate with DSH Web or DeepSeek Harness Web.
 ---
 
 # DSH Web
 
-Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Codex remains responsible for inspecting files and running validation.
+Use the bundled Python client. It owns server startup, session creation, permissions, stable titles, prompting, and correlated waiting. Always show the exact task session in Codex Browser. Codex remains responsible for inspecting files and running validation.
 
 ## Locate the client
 
@@ -33,7 +33,8 @@ For a new session:
 <python> <client> task \
   --cwd <absolute-repository-path> \
   --intent <read|write|full-access> \
-  --prompt "<specific task and constraints>"
+  --prompt "<specific task and constraints>" \
+  --ui
 ```
 
 The client automatically:
@@ -42,9 +43,9 @@ The client automatically:
 2. Creates the session in the requested repository.
 3. Maps intent to and verifies the effective DSH permission.
 4. Assigns a unique visible title.
-5. Sends the prompt and waits for the correlated answer.
+5. Dispatches the prompt and returns the exact UI title plus an opaque wait receipt.
 
-The result is one JSON object. Keep its `sessionId` for follow-up work.
+Keep the returned `sessionId` for follow-up work.
 
 To continue the same session:
 
@@ -52,14 +53,15 @@ To continue the same session:
 <python> <client> task \
   --session <session-id> \
   --intent <read|write|full-access> \
-  --prompt "<follow-up task or validation feedback>"
+  --prompt "<follow-up task or validation feedback>" \
+  --ui
 ```
 
 Use one session sequentially. Create separate sessions for genuinely parallel work.
 
-## Show the active session
+## Open the exact active session
 
-When the user asks to see DSH Web in Codex Desktop, add `--ui`:
+Use UI-first behavior for every delegated task, even when the user does not separately ask to see the interface. Always pass `--ui`. Use `--no-ui` only when the user explicitly requests no WebView.
 
 ```text
 <python> <client> task \
@@ -75,11 +77,13 @@ A dispatched result contains:
 - `ui.title`: the exact session title.
 - `receipt`: an opaque value used by `wait`.
 
-Use the Codex in-app Browser control to open `ui.url`. DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match.
+Immediately use the Codex in-app Browser control to open `ui.url`. Do not merely print the URL or return a link.
+
+DSH Web stores the selected session in frontend state, so opening the root URL may show an old session. Reveal the session list or search, select the exact `ui.title`, and verify that both the selected item and visible conversation title match. Do not continue while an old session or the new-session page is selected.
 
 Use Computer Use only when normal Browser control is unavailable or cannot operate the page after a retry.
 
-After selecting the session, wait for the result:
+Only after the exact session is visibly selected, wait for the result:
 
 ```text
 <python> <client> wait <receipt>

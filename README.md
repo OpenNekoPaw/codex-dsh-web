@@ -4,7 +4,7 @@ English | [简体中文](README_CN.md)
 
 `codex-dsh-web` is a small Codex plugin for delegating development work to a local [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web session.
 
-Codex sends the task through DSH Web's local API, can show the exact active session in the built-in Browser, then inspects the files and runs validation itself.
+Codex sends the task through DSH Web's local API, opens the exact active session in the built-in Browser by default, then inspects the files and runs validation itself.
 
 ## What it does
 
@@ -12,7 +12,7 @@ Codex sends the task through DSH Web's local API, can show the exact active sess
 - Creates or continues a session for the target repository.
 - Chooses and verifies the DSH permission automatically.
 - Sends a task and waits for the matching answer.
-- Optionally selects the exact session in Codex Desktop's Browser.
+- Opens and selects the exact session in Codex Desktop's Browser for every task.
 - Keeps Codex responsible for reviewing changes and running tests.
 
 The plugin does not make Codex call DSH for every request. It activates when you mention DSH Web, DeepSeek Harness Web, or explicitly use `$dsh-web`.
@@ -66,13 +66,13 @@ Natural language also works:
 Ask DSH Web to review this repository without changing files.
 ```
 
-To keep the live DSH trace visible:
+The live DSH trace opens by default; no extra UI instruction is required:
 
 ```text
-Use $dsh-web to implement this feature and show the active DSH session in the built-in browser.
+Use $dsh-web to implement this feature.
 ```
 
-Codex opens DSH Web, selects the session by its unique title, and verifies the visible conversation. This matters because DSH Web's root URL may otherwise restore an older session.
+Codex dispatches the task, opens DSH Web, selects the session by its unique title, verifies the visible conversation, and then waits for the result. This matters because DSH Web's root URL may otherwise restore an older session.
 
 For teams that always want DSH delegation, add a short project instruction to `AGENTS.md`:
 
@@ -121,7 +121,7 @@ It reports Python, npm, DSH, and server readiness, including the DSH install com
 
 ### The Browser shows an old session
 
-Ask Codex to show the active DSH session. The skill dispatches the task first, then selects the exact returned title instead of relying on the root page's remembered state.
+The skill dispatches the task first, then selects the exact returned title instead of relying on the root page's remembered state. If an old session remains visible, report it as a session-selection failure.
 
 ### A session is already running
 

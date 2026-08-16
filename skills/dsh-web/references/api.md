@@ -36,7 +36,8 @@ Create a session for a repository:
 python3 dsh_client.py task \
   --cwd /absolute/repository/path \
   --intent write \
-  --prompt "Implement the feature"
+  --prompt "Implement the feature" \
+  --ui
 ```
 
 Continue an existing session:
@@ -45,7 +46,8 @@ Continue an existing session:
 python3 dsh_client.py task \
   --session <session-id> \
   --intent read \
-  --prompt "Review the current implementation"
+  --prompt "Review the current implementation" \
+  --ui
 ```
 
 Intent mapping:
@@ -56,21 +58,9 @@ Intent mapping:
 | `write` | `workspace-write` |
 | `full-access` | `danger-full-access` |
 
-Without `--ui`, the command waits and returns:
-
-```json
-{
-  "status": "completed",
-  "sessionId": "...",
-  "permission": "workspace-write",
-  "title": "Codex: Implement the feature [a65d-ed81]",
-  "answer": "..."
-}
-```
-
 The command checks health, starts a refused local loopback service, creates or reuses the session, verifies permissions, sets a stable title, and correlates the answer to its prompt.
 
-## task --ui and wait
+## Default UI task and wait
 
 ```text
 python3 dsh_client.py task \
@@ -80,7 +70,7 @@ python3 dsh_client.py task \
   --ui
 ```
 
-This dispatches immediately:
+UI mode is the default; `--ui` makes the intent explicit. The command dispatches immediately:
 
 ```json
 {
@@ -103,6 +93,18 @@ python3 dsh_client.py wait <receipt>
 ```
 
 `receipt` is opaque and versioned. Do not parse, edit, or persist it as a public protocol. A completed wait returns compact JSON with `status`, `sessionId`, and `answer`.
+
+Use `--no-ui` only for an explicitly headless call. It waits in the task command and returns:
+
+```json
+{
+  "status": "completed",
+  "sessionId": "...",
+  "permission": "workspace-write",
+  "title": "Codex: Implement the feature [a65d-ed81]",
+  "answer": "..."
+}
+```
 
 ## debug
 

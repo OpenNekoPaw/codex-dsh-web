@@ -1,4 +1,4 @@
 interface:
   display_name: "DSH Web"
   short_description: "Drive DSH Web sessions from Codex"
-  default_prompt: "Use $dsh-web for this task, show the exact active DSH session when requested, then inspect and verify the result."
+  default_prompt: "Use $dsh-web for this task, open and select the exact active DSH session in Codex Browser, then inspect and verify the result."
