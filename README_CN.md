@@ -12,6 +12,7 @@ Codex 可以创建或复用 DSH session、发送开发任务、等待 DSH 完成
 Codex
   │
   ├─ POST /api/session.create ── 创建独立 session
+  ├─ POST /api/commands/execute ─ 自动设置并验证权限
   ├─ POST /api/session.prompt ── 发送任务或验证结果
   ├─ POST /api/session.history ─ 等待 turn/end 并读取回答
   │
@@ -138,21 +139,27 @@ skill 的描述允许隐式触发，但 Codex 不会仅因为端口 `8765` 已�
 使用 $dsh-web 完成这个任务，并在内置浏览器中打开 DSH Web UI。
 ```
 
-Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到当前平台默认浏览器。仅打开页面不能替代通过 API 读取结果；需要 Codex 检查或操作 UI 时应明确提出。
+Codex Desktop 会优先在 Browser/WebView 面板打开 `DSH_URL`。若该界面不可用，客户端的 `open` 命令会回退到当前平台默认浏览器。仅打开页面既不能替代通过 API 读取结果，也不代表可视界面已经同步到当前会话；需要 Codex 检查或操作 UI 时应明确提出。
 
-DSH Web 当前把选中的会话保存在前端状态中，切换会话后 URL 仍是 `/`，不存在可直接拼接的会话路由。对于 API 驱动的任务，skill 会先设置唯一标题、派发 prompt，再在 DSH 侧边栏搜索并点击该标题，最后校验会话条目已选中且对话标题一致。仍显示“新会话”输入页不算已经切换到本次调用的 session。
+DSH Web 当前把选中的会话保存在前端状态中，切换会话后 URL 仍是 `/`，不存在可直接拼接的会话路由。打开 `/` 可能恢复浏览器上次选中的旧会话。对于 API 驱动的任务，skill 会先设置唯一标题、派发 prompt；如果侧边栏已收起，则先展开侧边栏或打开会话搜索，再搜索并点击精确标题，最后同时校验会话条目的 `aria-selected="true"` 和可见对话标题。仍显示旧会话或“新会话”输入页都表示同步失败。
+
+内置 Browser 是首选控制方式。只有在重新检查页面并尝试正常恢复后，Browser 语义控制仍无法操作界面时，才使用 Computer Use 作为兜底；侧边栏收起本身不需要切换到 Computer Use。
 
 插件的第一条 starter prompt 只执行打开 UI 的动作，因此即使没有附带实现任务，也应直接打开 Browser 面板，而不是追问要修改什么代码。仅显示 URL 链接或网页预览卡片不算已经打开面板。
 
 ### DSH session 配置
 
-插件不强制固定的 agent preset、权限策略或模型：
+插件不强制固定的 agent preset 或模型。权限由 Codex 自动选择和验证，不需要
+用户在 DSH Web 中手动配置：
 
 - `minimal` 是开销较低的实用默认值，但不是协议要求。
-- 只读分析使用 read-only，实现任务使用 workspace-write。仅在任务明确需要访问工作区以外资源时使用 danger-full-access。
+- 分析、检查、评审和诊断自动使用 `read-only`；实现、修复和其他可能修改仓库的任务自动使用 `workspace-write`。
+- 只有用户明确要求在工作区边界外写入时才使用 `danger-full-access`。
 - DSH 模型应按任务质量、延迟和成本选择；客户端复用 session 已配置的模型，不硬编码具体模型。
 
-当前 HTTP 客户端创建 session 时只设置工作目录。若默认配置不合适，应先在 DSH Web 中调整 preset、权限或模型，再发送任务。
+客户端通过 DSH Web UI 使用的同一条命令 RPC 设置权限，并在发送 prompt 前
+确认 `session.history` 已报告目标权限。自然语言中的“不要修改文件”不能替代
+真正的沙箱权限。除非用户要求，agent preset 和模型保持 session 当前配置。
 
 ## 直接使用客户端
 
@@ -162,7 +169,7 @@ DSH Web 当前把选中的会话保存在前端状态中，切换会话后 URL �
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py doctor
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py start
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py health
-python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径 --permission read-only
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py run <session-id> "读取 README.md 并概括项目，不要修改文件"
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py history <session-id> --messages
 ```
@@ -180,7 +187,7 @@ $Client = "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py"
 $Repository = "C:\仓库绝对路径"
 py -3 $Client doctor
 py -3 $Client start
-$SessionId = py -3 $Client create --cwd $Repository
+$SessionId = py -3 $Client create --cwd $Repository --permission read-only
 py -3 $Client run $SessionId "读取 README.md 并概括项目，不要修改文件"
 ```
 
@@ -190,7 +197,7 @@ Windows 命令提示符也可以直接调用客户端。保留 `create` 输出�
 ```bat
 py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" doctor
 py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" start
-py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\仓库绝对路径"
+py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\仓库绝对路径" --permission read-only
 py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" run <session-id> "读取 README.md 并概括项目，不要修改文件"
 ```
 
@@ -201,7 +208,8 @@ py -3 "C:\插件绝对路径\skills\dsh-web\scripts\dsh_client.py" run <session-
 | `doctor` | 检查 Python、DSH、npm 和服务状态，不执行安装 |
 | `health` | 检查 DSH Web 是否可访问 |
 | `start` | 复用或后台启动本机 loopback DSH Web，并输出 runtime 和日志路径 |
-| `create` | 使用必填的明确目标目录创建 session |
+| `create` | 使用必填目标目录创建 session，并强制验证 `--permission`（默认 `workspace-write`） |
+| `permission` | 查看或自动切换并验证已有 session 的权限 |
 | `rename` | 固定唯一标题，供内置浏览器精确选择 session |
 | `ui-target` | 输出 session 对应的基础 UI 地址和投影标题 |
 | `run` | 锁定 session、拒绝正在运行的 session、发送消息并等待与本次请求关联的 turn |
@@ -237,7 +245,7 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py .
 
 ```text
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py start
-python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径
+python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py create --cwd /仓库绝对路径 --permission read-only
 python3 /插件绝对路径/skills/dsh-web/scripts/dsh_client.py run <session-id> "读取 README.md，只回复项目名称，不修改文件"
 ```
 
@@ -303,6 +311,6 @@ runtime，后续 session 仍通过 `create --cwd` 接收各自的仓库路径。
 - 不要把 API Key、密码或完整环境变量发送到 DSH session。
 - 反馈测试错误时只发送必要的命令、退出码和相关错误片段。
 - DSH 的回复不能替代验证；Codex 应检查实际文件并运行相关测试。
-- DSH 对目标仓库的写入能力受其权限配置和 Codex 所在环境约束。
+- DSH 对目标仓库的写入能力受客户端自动选择并验证的权限以及 Codex 所在环境约束。
 
 更多本地 marketplace 和插件打包说明参见 [OpenAI 插件文档](https://developers.openai.com/plugins/build/plugins)。

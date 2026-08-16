@@ -33,6 +33,7 @@ DSH_INSTALL_COMMAND = f"npm install --global {DSH_PACKAGE}"
 DSH_PROJECT_URL = "https://github.com/deepseek-ai/deepseek-harness"
 DEFAULT_STARTUP_TIMEOUT = 20.0
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+PERMISSION_PRESETS = ("read-only", "workspace-write", "danger-full-access")
 DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -445,6 +446,28 @@ class DshClient:
             },
         )
 
+    def execute_command(self, session_id: str, line: str) -> dict[str, Any]:
+        value = self.post(
+            "commands/execute",
+            {"args": {"agentId": session_id, "line": line}},
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("commandId"), str):
+            raise DshClientError(
+                f"DSH did not recognize command {line!r}; upgrade DSH Web to a version "
+                "that exposes /api/commands/execute"
+            )
+        result = value.get("result")
+        if not isinstance(result, dict):
+            raise DshClientError("commands/execute returned an invalid result")
+        kind = result.get("kind")
+        if kind == "error":
+            raise DshClientError(
+                f"DSH command failed: {result.get('text') or 'unknown command error'}"
+            )
+        if kind != "success":
+            raise DshClientError("commands/execute returned an unknown result kind")
+        return value
+
     def history(self, session_id: str) -> list[dict[str, Any]]:
         value = self.history_page(session_id)
         return [item for item in value["events"] if isinstance(item, dict)]
@@ -677,6 +700,64 @@ def session_title(value: dict[str, Any]) -> Optional[str]:
     return title if isinstance(title, str) and title else None
 
 
+def session_permission(value: dict[str, Any]) -> dict[str, Any]:
+    projections = value.get("projections")
+    if not isinstance(projections, dict):
+        raise DshClientError(
+            "session history has no permission projection; upgrade DSH Web before "
+            "using automatic permission selection"
+        )
+    values = projections.get("values")
+    permissions = values.get("permissions") if isinstance(values, dict) else None
+    if not isinstance(permissions, dict):
+        raise DshClientError(
+            "session history has no permission projection; upgrade DSH Web before "
+            "using automatic permission selection"
+        )
+    current = permissions.get("currentValue")
+    options = permissions.get("options")
+    available = []
+    if isinstance(options, list):
+        available = [
+            option["value"]
+            for option in options
+            if isinstance(option, dict)
+            and isinstance(option.get("value"), str)
+            and option["value"]
+        ]
+    if not isinstance(current, str) or not current or not available:
+        raise DshClientError("session permission projection is invalid")
+    return {"currentValue": current, "available": available}
+
+
+def set_session_permission(
+    client: DshClient, session_id: str, preset: str
+) -> dict[str, Any]:
+    with session_lock(client.base_url, session_id):
+        ensure_session_idle(client, session_id)
+        before = session_permission(client.history_page(session_id))
+        if preset not in before["available"]:
+            available = ", ".join(before["available"])
+            raise DshClientError(
+                f"DSH permission preset {preset!r} is unavailable (available: {available})"
+            )
+        changed = before["currentValue"] != preset
+        if changed:
+            client.execute_command(session_id, f"/permission {preset}")
+        after = session_permission(client.history_page(session_id))
+        if after["currentValue"] != preset:
+            raise DshClientError(
+                f"DSH permission verification failed: requested {preset!r}, "
+                f"effective {after['currentValue']!r}"
+            )
+        return {
+            "sessionId": session_id,
+            "currentValue": after["currentValue"],
+            "available": after["available"],
+            "changed": changed,
+        }
+
+
 def ui_target(client: DshClient, session_id: str) -> dict[str, str]:
     title = session_title(client.history_page(session_id))
     if title is None:
@@ -832,8 +913,22 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health", help="check whether DSH Web is reachable")
     subparsers.add_parser("start", help="start a local DSH Web service if needed")
 
-    create_parser = subparsers.add_parser("create", help="create a session")
+    create_parser = subparsers.add_parser(
+        "create", help="create a session and enforce its permission preset"
+    )
     create_parser.add_argument("--cwd", required=True)
+    create_parser.add_argument(
+        "--permission",
+        choices=PERMISSION_PRESETS,
+        default="workspace-write",
+        help="permission preset to enforce and verify (default: workspace-write)",
+    )
+
+    permission_parser = subparsers.add_parser(
+        "permission", help="inspect or enforce a session permission preset"
+    )
+    permission_parser.add_argument("session_id")
+    permission_parser.add_argument("preset", nargs="?", choices=PERMISSION_PRESETS)
 
     rename_parser = subparsers.add_parser(
         "rename", help="set a stable title for browser selection"
@@ -923,7 +1018,18 @@ def main() -> int:
         cwd = str(Path(args.cwd).expanduser().resolve())
         if not Path(cwd).is_dir():
             raise DshClientError(f"session cwd is not a directory: {cwd}")
-        print(client.create(cwd))
+        session_id = client.create(cwd)
+        set_session_permission(client, session_id, args.permission)
+        print(session_id)
+    elif args.command == "permission":
+        if args.preset is None:
+            output = {
+                "sessionId": args.session_id,
+                **session_permission(client.history_page(args.session_id)),
+            }
+        else:
+            output = set_session_permission(client, args.session_id, args.preset)
+        print(json.dumps(output, ensure_ascii=False))
     elif args.command == "rename":
         print(json.dumps(client.rename(args.session_id, args.title), ensure_ascii=False))
     elif args.command == "ui-target":

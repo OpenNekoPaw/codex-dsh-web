@@ -73,6 +73,7 @@ class FakeDshHandler(BaseHTTPRequestHandler):
         Callable[[dict[str, Any]], list[dict[str, Any]]]
     ] = None
     title = "Codex test session [session-1]"
+    permission = "workspace-write"
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -106,7 +107,18 @@ class FakeDshHandler(BaseHTTPRequestHandler):
         elif method == "session.history":
             value = {
                 "events": list(self.events),
-                "projections": {"values": {"title": self.title}},
+                "projections": {
+                    "values": {
+                        "title": self.title,
+                        "permissions": {
+                            "options": [
+                                {"value": preset, "name": preset}
+                                for preset in dsh_client.PERMISSION_PRESETS
+                            ],
+                            "currentValue": self.permission,
+                        },
+                    }
+                },
             }
         elif method == "session.list":
             value = {
@@ -119,6 +131,14 @@ class FakeDshHandler(BaseHTTPRequestHandler):
         elif method == "session.rename":
             type(self).title = request["payload"]["title"].strip()
             value = {"title": type(self).title, "seq": 2}
+        elif method == "commands/execute":
+            line = request["payload"]["args"]["line"]
+            preset = line.removeprefix("/permission ")
+            type(self).permission = preset
+            value = {
+                "commandId": "cmd-1",
+                "result": {"kind": "success", "text": f"preset {preset}"},
+            }
         else:
             value = None
 
@@ -165,6 +185,7 @@ class DshClientTests(unittest.TestCase):
         FakeDshHandler.response_mutator = None
         FakeDshHandler.prompt_events = None
         FakeDshHandler.title = "Codex test session [session-1]"
+        FakeDshHandler.permission = "workspace-write"
 
     def test_health_create_list_and_cancel(self) -> None:
         self.client.health()
@@ -172,6 +193,57 @@ class DshClientTests(unittest.TestCase):
         records = dsh_client.session_records(self.client.list_sessions())
         self.assertEqual(records[0]["sessionId"], "session-1")
         self.assertTrue(self.client.cancel("session-1")["cancelled"])
+
+    def test_set_permission_executes_command_and_verifies_projection(self) -> None:
+        result = dsh_client.set_session_permission(
+            self.client, "session-1", "read-only"
+        )
+        self.assertEqual(result["currentValue"], "read-only")
+        self.assertTrue(result["changed"])
+        self.assertEqual(FakeDshHandler.permission, "read-only")
+
+    def test_set_permission_skips_command_when_already_effective(self) -> None:
+        with mock.patch.object(self.client, "execute_command") as execute:
+            result = dsh_client.set_session_permission(
+                self.client, "session-1", "workspace-write"
+            )
+        self.assertFalse(result["changed"])
+        execute.assert_not_called()
+
+    def test_permission_projection_and_command_fail_loud(self) -> None:
+        with self.assertRaisesRegex(
+            dsh_client.DshClientError, "no permission projection"
+        ):
+            dsh_client.session_permission({"events": []})
+
+        fake_client = mock.Mock(base_url="http://127.0.0.1:8765")
+        fake_client.list_sessions.return_value = {
+            "items": [{"sessionId": "session-1", "running": False}]
+        }
+        fake_client.history_page.return_value = {
+            "events": [],
+            "projections": {
+                "values": {
+                    "permissions": {
+                        "options": [{"value": "workspace-write"}],
+                        "currentValue": "workspace-write",
+                    }
+                }
+            },
+        }
+        with self.assertRaisesRegex(dsh_client.DshClientError, "unavailable"):
+            dsh_client.set_session_permission(fake_client, "session-1", "read-only")
+
+        with mock.patch.object(
+            self.client,
+            "post",
+            return_value={
+                "commandId": "cmd-1",
+                "result": {"kind": "error", "text": "denied"},
+            },
+        ):
+            with self.assertRaisesRegex(dsh_client.DshClientError, "denied"):
+                self.client.execute_command("session-1", "/permission read-only")
 
     def test_rename_and_ui_target_use_the_title_projection(self) -> None:
         renamed = self.client.rename("session-1", "Codex: inspect repo [session-1]")

@@ -12,6 +12,7 @@ Codex can create or reuse a DSH session, delegate development tasks, wait for DS
 Codex
   │
   ├─ POST /api/session.create ── create an isolated session
+  ├─ POST /api/commands/execute ─ enforce and verify its permission
   ├─ POST /api/session.prompt ── send a task or validation result
   ├─ POST /api/session.history ─ wait for turn/end and read the answer
   │
@@ -147,13 +148,21 @@ Use $dsh-web for this task and open the DSH Web UI in the built-in browser.
 Codex Desktop should open `DSH_URL` in its Browser/WebView panel. When that
 surface is unavailable, the client's `open` command falls back to the platform
 default browser. Opening the page alone does not replace API-based result
-collection; UI inspection or interaction must be explicitly requested.
+collection or synchronize the visible session; UI inspection or interaction
+must be explicitly requested.
 
 DSH Web currently keeps the selected session in client-side state: choosing a
 session does not change the `/` URL. For an API-driven task, the skill assigns a
-unique title, dispatches the prompt, searches that title in the DSH sidebar,
-clicks it, and verifies the selected conversation header. A tab that still shows
-the New Session composer is not considered synchronized with the active session.
+unique title, dispatches the prompt, opens the sidebar or session search when it
+is collapsed, searches the exact title, clicks its session item, and verifies
+both `aria-selected="true"` and the visible conversation title. Loading `/` may
+restore an older client-side selection, so any old conversation or New Session
+composer is a synchronization failure until those checks pass.
+
+The in-app Browser is the primary control surface. Computer Use is a fallback
+only when semantic Browser control remains unable to interact with the page
+after inspection and recovery; a collapsed sidebar by itself does not require
+the fallback.
 
 The first plugin starter prompt performs this UI-only action, so opening the
 plugin without an implementation request should still open the Browser panel
@@ -162,13 +171,19 @@ does not count as opening the panel.
 
 ### DSH session configuration
 
-The plugin does not require a fixed agent preset, permission policy, or model:
+The plugin does not require a fixed agent preset or model. Permission selection
+is automatic and does not require the user to configure DSH Web:
 
 - `minimal` is a practical low-overhead preset, but it is not required by the protocol.
-- Use read-only permission for analysis and workspace-write for implementation. Reserve danger-full-access for tasks that explicitly need access outside the workspace.
+- Codex selects and verifies `read-only` for analysis and `workspace-write` for implementation.
+- `danger-full-access` is used only when the user explicitly requests work that needs writes outside the workspace boundary.
 - Select the DSH model according to task quality, latency, and cost needs. The client reuses the session's configured model and does not hard-code one.
 
-The current HTTP API client creates sessions with a working directory only. Change the preset, permission, or model in DSH Web before prompting when its defaults are unsuitable.
+The client applies permissions through the same command RPC used by the DSH Web
+UI, then verifies `session.history` reports the requested effective preset before
+it sends a prompt. It never treats a natural-language "do not modify files"
+instruction as a permission boundary. Agent preset and model selection remain
+unchanged unless the user asks to change them.
 
 ## Direct client usage
 
@@ -178,7 +193,7 @@ You can test the HTTP client without installing the plugin:
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py doctor
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py start
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py health
-python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path --permission read-only
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py run <session-id> "Read README.md and summarize the project. Do not modify files."
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py history <session-id> --messages
 ```
@@ -196,7 +211,7 @@ $Client = "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py"
 $Repository = "C:\absolute\repository\path"
 py -3 $Client doctor
 py -3 $Client start
-$SessionId = py -3 $Client create --cwd $Repository
+$SessionId = py -3 $Client create --cwd $Repository --permission read-only
 py -3 $Client run $SessionId "Read README.md and summarize the project. Do not modify files."
 ```
 
@@ -206,7 +221,7 @@ session ID printed by `create` and pass it to the next command:
 ```bat
 py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" doctor
 py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" start
-py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\absolute\repository\path"
+py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" create --cwd "C:\absolute\repository\path" --permission read-only
 py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" run <session-id> "Read README.md and summarize the project. Do not modify files."
 ```
 
@@ -217,7 +232,8 @@ py -3 "C:\absolute\plugin\path\skills\dsh-web\scripts\dsh_client.py" run <sessio
 | `doctor` | Report Python, DSH, npm, and server readiness without installing anything |
 | `health` | Check whether DSH Web is reachable |
 | `start` | Reuse or start a detached local loopback DSH Web service and report its runtime and log paths |
-| `create` | Create a session rooted at a required explicit target directory |
+| `create` | Create a session rooted at a required explicit target directory and enforce `--permission` (default `workspace-write`) |
+| `permission` | Inspect or automatically switch and verify an existing session's permission preset |
 | `rename` | Pin a stable, unique title for exact browser selection |
 | `ui-target` | Print the base UI URL and projected title for a session |
 | `run` | Lock the session, reject an already-running session, send a prompt, and wait for its correlated turn |
@@ -253,7 +269,7 @@ An end-to-end test calls a real model and may incur API charges:
 
 ```text
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py start
-python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path
+python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py create --cwd /absolute/repository/path --permission read-only
 python3 /absolute/plugin/path/skills/dsh-web/scripts/dsh_client.py run <session-id> "Read README.md and reply with only the project name. Do not modify files."
 ```
 
@@ -325,6 +341,6 @@ Normally, no. The skill checks the same `DSH_URL` first. Multiple tasks share on
 - Do not send API keys, passwords, or complete environment dumps to a DSH session.
 - When returning validation failures, include only the command, exit code, and relevant error excerpt.
 - Treat DSH responses as collaboration output, not verification. Codex should inspect the actual files and run relevant tests.
-- DSH write access is governed by its permission configuration and the surrounding Codex environment.
+- DSH write access is governed by the permission preset automatically selected and verified by the client, plus the surrounding Codex environment.
 
 See the [OpenAI plugin documentation](https://developers.openai.com/plugins/build/plugins) for additional local marketplace and plugin packaging guidance.

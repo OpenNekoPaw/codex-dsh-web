@@ -1,6 +1,6 @@
 ---
 name: dsh-web
-description: Drive a local DSH Web server from Codex through its HTTP API, including starting or checking the server, opening its UI in the Codex Desktop browser, creating and reusing sessions, sending prompts, waiting for completed turns, reviewing history, verifying code changes, and returning validation feedback to the same session. Use when the user asks Codex to open, call, delegate to, collaborate with, converse with, or execute work through dsh web or DeepSeek Harness web, especially for iterative implementation and test-fix loops with browser-visible traces.
+description: Drive a local DSH Web server from Codex through its HTTP API, including starting or checking the server, opening its UI in the Codex Desktop browser, creating and reusing sessions with automatically enforced task-appropriate permissions, sending prompts, waiting for completed turns, reviewing history, verifying code changes, and returning validation feedback to the same session. Use when the user asks Codex to open, call, delegate to, collaborate with, converse with, or execute work through dsh web or DeepSeek Harness web, especially for iterative implementation and test-fix loops with browser-visible traces.
 ---
 
 # DSH Web
@@ -111,15 +111,45 @@ above without changing the client command or its arguments.
    for deterministic prompting and history reads. Use browser control only when
    the user asks Codex to inspect or interact with the visible UI.
 
-2. Create one session rooted at the target repository:
+2. Choose and enforce the session permission automatically. Do not ask the user
+   to configure DSH permissions in the UI:
+
+   - Use `read-only` for inspection, explanation, review, diagnosis, and planning
+     that must not change files.
+   - Use `workspace-write` for implementation, fixes, refactors, formatting,
+     tests that may write artifacts, and other repository-changing work.
+   - Use `danger-full-access` only when the user explicitly requests an operation
+     that requires writes outside the repository and permitted temporary paths.
+
+   Create one session rooted at the target repository and pass the selected
+   preset in the same command:
 
    ```text
-   <python> <client> create --cwd <verified-absolute-repository-path>
+   <python> <client> create --cwd <verified-absolute-repository-path> --permission <read-only-or-workspace-write>
    ```
 
-   `--cwd` is required. Capture the printed session ID and reuse it for the
-   complete task. Never substitute the service runtime directory for the target
-   repository.
+   `--cwd` is required. `create` executes DSH's command RPC when the new
+   session's effective preset differs, then verifies
+   `projections.values.permissions.currentValue` before printing the session ID.
+   Treat a command or verification failure as a compatibility error and stop;
+   do not replace enforced permissions with a prompt such as "do not modify
+   files", and do not send the user to DSH Web to configure the session.
+
+   Capture the printed session ID and reuse it for the complete task. Never
+   substitute the service runtime directory for the target repository.
+
+   Before reusing an existing session, inspect or enforce the task-appropriate
+   preset without user interaction:
+
+   ```text
+   <python> <client> permission <session-id> [read-only|workspace-write|danger-full-access]
+   ```
+
+   Trust the verified DSH permission projection. When it reports `read-only`, do
+   not add a second Codex-side restriction or reject the collaboration merely
+   because the model can describe a possible edit. If task intent changes from
+   analysis to implementation, switch the same idle session to
+   `workspace-write` before sending the implementation prompt.
 
    Immediately give the session a stable, unique UI title. Use a concise task
    description plus a short suffix from the session ID, for example:
@@ -155,33 +185,49 @@ above without changing the client command or its arguments.
    ```
 
    Capture `rpcId`, `afterCount`, and optional `afterSeq` from `dispatch`, plus
-   `url` and `title` from `ui-target`. Then use the Codex in-app Browser:
+   `url` and `title` from `ui-target`. Then use
+   `browser:control-in-app-browser` to claim or open the Codex in-app Browser tab
+   and synchronize it with the exact session:
 
-   - Reuse or open a tab at the returned `url`.
-   - Locate the session-search textbox by its accessible label (for example,
-     `Search sessions...` or `搜索会话...`) and fill the returned exact title.
-   - Wait for a session `treeitem` containing that title, click it, and verify
-     that the item has `aria-selected="true"` and the conversation header or
-     breadcrumb contains the same title.
-   - Do not report the active session as visible when the tab only shows the New
-     Session entry page, workspace chooser, or root composer.
+   - Reuse or open a tab at the returned `url`. Loading `/` is not session
+     synchronization because DSH restores the tab's previous client-side
+     selection.
+   - Inspect the current page. If the session-search textbox or session tree is
+     absent, click `Open sidebar` / `打开侧边栏` or `Search sessions` /
+     `搜索会话` before continuing. A collapsed sidebar is a recoverable UI state,
+     not a reason to stop.
+   - Fill `Search sessions...` / `搜索会话...` with the exact title returned by
+     `ui-target`. Wait for the matching session `treeitem`, then click it.
+   - Verify both that the matching `treeitem` has `aria-selected="true"` and
+     that the conversation header or breadcrumb contains the exact title.
+   - Treat any old conversation, the New Session entry page, workspace chooser,
+     or root composer as synchronization failure until both checks pass. Do not
+     stop after merely opening the WebView or report that the active session is
+     visible before verification succeeds.
 
    DSH Web 0.1.0-rc.6 keeps session selection in client-side state and leaves the
    URL at `/`; do not invent or navigate to a `/session/<id>` route. If the title
    is not visible immediately, keep the browser tab open and wait briefly for the
    session list update instead of opening another DSH server.
 
-   After the correct session is selected, wait for the dispatched turn without
+   Use Browser control as the primary UI surface. If it is unavailable or still
+   cannot interact with DSH after fresh page inspection and normal recovery, use
+   `computer-use` against the Codex app as a fallback to expand the sidebar,
+   search the exact title, click the matching session, and visually verify the
+   selected title. Do not use Computer Use merely because the sidebar starts
+   collapsed.
+
+   After the correct session is selected and verified, wait for the dispatched turn without
    losing an immediately completed result:
 
    ```text
    <python> <client> wait <session-id> --after-count <afterCount> [--after-seq <afterSeq>] --rpc-id <rpcId>
    ```
 
-   Omit `--after-seq` when `dispatch` prints `null`. If in-app Browser control is
-   unavailable, use the default-browser fallback, report the exact session title
-   for manual selection, and state that automatic session switching was not
-   available.
+   Omit `--after-seq` when `dispatch` prints `null`. If neither Browser control
+   nor Computer Use can operate the in-app UI, use the default-browser fallback,
+   report the exact session title for manual selection, and state that automatic
+   session switching was not available.
 
 4. Inspect the workspace changes and independently run the narrowest relevant tests, lint, or build. Do not accept an `assistant/message` as proof that work succeeded.
 
@@ -199,6 +245,8 @@ Use these only when the combined loop is unsuitable:
 
 - `doctor` reports Python, DSH, npm, and server readiness without installing anything.
 - `start` starts one local loopback DSH Web service when `health` reports connection refused.
+- `permission <session-id> [preset]` prints the enforced DSH permission or
+  switches and verifies it through `/api/commands/execute`.
 - `prompt <session-id> <text>` queues a prompt without waiting.
 - `rename <session-id> <title>` pins a stable title for exact UI selection.
 - `ui-target <session-id>` prints the base URL and title used to find the session
@@ -220,13 +268,14 @@ Read [references/api.md](references/api.md) when debugging envelopes, response s
 ## Respect session configuration
 
 - Do not require a particular DSH agent preset or model. Reuse the session's
-  configured preset and model unless the user asks to change them. The `minimal`
-  preset is a sensible low-overhead default, not a protocol requirement.
-- Match DSH permissions to the task: use read-only for analysis, workspace-write
-  for implementation, and danger-full-access only when the user explicitly needs
-  operations outside the workspace boundary.
-- The current HTTP client does not set the preset, model, or permission policy.
-  Configure those in DSH Web before prompting when the defaults are unsuitable.
+  configured agent preset and model unless the user asks to change them. The
+  `minimal` agent preset is a sensible low-overhead default, not a protocol
+  requirement.
+- Select, enforce, and verify the DSH permission automatically as described
+  above. Never require manual permission configuration.
+- Treat `projections.values.permissions.currentValue` as the authoritative
+  effective permission. A natural-language instruction is not a substitute for
+  that enforced state.
 
 ## Apply safeguards
 

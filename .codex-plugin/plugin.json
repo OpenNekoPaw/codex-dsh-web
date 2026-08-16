@@ -1,6 +1,6 @@
 {
   "name": "codex-dsh-web",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "description": "Drive and verify DSH Web sessions from Codex.",
   "author": {
     "name": "OpenNekoPaw",
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "DSH Web for Codex",
     "shortDescription": "Delegate tasks to local DSH Web sessions.",
-    "longDescription": "Create and reuse DSH Web sessions, select the active API-driven session in Codex Desktop's live UI, inspect results, and feed Codex verification back into the same session.",
+    "longDescription": "Create DSH Web sessions with automatically enforced task-appropriate permissions, select and verify the exact active session in Codex Desktop's live UI, inspect results, and feed Codex verification back into the same session.",
     "developerName": "OpenNekoPaw",
     "category": "Productivity",
     "websiteURL": "https://github.com/OpenNekoPaw/codex-dsh-web",
@@ -30,8 +30,8 @@
     ],
     "defaultPrompt": [
       "Open DSH Web in Codex's built-in browser and confirm the local service is reachable.",
-      "Open DSH Web in the built-in browser, then use it to implement my task and verify the changes.",
-      "Open the existing DSH Web session in the built-in browser and continue the task."
+      "Open DSH Web in the built-in browser, automatically use workspace-write for my implementation task, select the exact newly created session even if the sidebar is collapsed, and verify the changes.",
+      "Open the existing DSH Web session in the built-in browser, select and verify its exact title, then continue the task."
     ]
   }
 }
