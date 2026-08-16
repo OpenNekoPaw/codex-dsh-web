@@ -6,6 +6,8 @@
 
 Codex 通过 DSH Web 本地 API 发送任务，默认在内置 Browser 侧栏中打开准确的活动会话，随后由 Codex 自己检查文件并运行验证。
 
+![Codex 与 DSH Web 并排协作](docs/assets/codex-dsh-web-demo.png)
+
 ## 功能
 
 - 多个独立 session 复用一个本地 DSH Web 服务。

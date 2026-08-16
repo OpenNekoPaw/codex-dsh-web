@@ -6,6 +6,8 @@ English | [简体中文](README_CN.md)
 
 Codex sends the task through DSH Web's local API, opens the exact active session in the in-app Browser side panel by default, then inspects the files and runs validation itself.
 
+![Codex and DSH Web working side by side](docs/assets/codex-dsh-web-demo.png)
+
 ## What it does
 
 - Reuses one local DSH Web service across multiple independent sessions.
